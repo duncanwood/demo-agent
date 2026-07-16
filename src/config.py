@@ -90,5 +90,7 @@ def make_tts():
     from pipecat.services.cartesia.tts import CartesiaTTSService
     return CartesiaTTSService(
         api_key=os.environ["CARTESIA_API_KEY"],
-        voice_id=os.getenv("CARTESIA_VOICE_ID", ""),
+        # An empty voice_id fails at synthesis time, so default to a catalog
+        # voice ("Blake", conversational male) when none is configured.
+        voice_id=os.getenv("CARTESIA_VOICE_ID") or "a167e0f3-df7e-4d52-a9c3-f949145efdab",
     )

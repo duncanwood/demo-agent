@@ -86,9 +86,11 @@ Pipeline order (confirmed against the aggregator pair's intended use):
 from __future__ import annotations
 
 import argparse
+import asyncio
 from typing import Any, Callable
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -166,6 +168,13 @@ async def bot(runner_args: SmallWebRTCRunnerArguments) -> None:
     )
 
     worker = PipelineWorker(pipeline, params=PipelineParams())
+
+    @transport.event_handler("on_client_connected")
+    async def _on_client_connected(_transport, _connection) -> None:
+        # The demo agent speaks first: kick one LLM turn off the system prompt.
+        # Without this the pipeline generates nothing until the user speaks.
+        await worker.queue_frames([LLMRunFrame()])
+
     # handle_sigint=False: this coroutine runs as a FastAPI background task
     # inside the dev server's own process/loop (see run_voice_agent) — the
     # server owns SIGINT: a per-connection runner shouldn't compete for it.
@@ -225,14 +234,49 @@ async def run_voice_agent(*, register_tools=None, system_prompt: str = "") -> No
     args = _dev_runner_args()
     _configure_server_app(args)  # same route setup main() does before uvicorn.run
 
-    print(
-        f"Voice agent ready. Open http://{args.host}:{args.port}/client/ in your browser.",
-        flush=True,
-    )
-
     # uvicorn.run() (what main() calls) calls asyncio.run() internally, which
     # raises when — as here — we're already inside a running loop.
     # Server.serve() is the awaitable form, so this composes inside our loop
     # instead of fighting it for one.
-    server = uvicorn.Server(uvicorn.Config(runner_app, host=args.host, port=args.port))
-    await server.serve()
+    server = uvicorn.Server(
+        uvicorn.Config(runner_app, host=args.host, port=args.port, timeout_graceful_shutdown=3)
+    )
+
+    # uvicorn's own signal capture re-raises the signal after shutdown, which
+    # kills the process before this coroutine ever resumes — everything after
+    # this await (browser stop, the lead report) would be dead code on the
+    # Ctrl-C/SIGTERM path (verified empirically with a sentinel). So: let serve()
+    # start and install its handlers, then override them with loop-level ones
+    # that request a graceful stop, making serve() RETURN instead. A second
+    # signal force-exits.
+    import signal
+
+    serve_task = asyncio.create_task(server.serve())
+    while not server.started and not serve_task.done():
+        await asyncio.sleep(0.05)
+    if serve_task.done():
+        await serve_task  # startup failed (e.g. port in use) — surface its error
+        return
+
+    def _request_stop() -> None:
+        if server.should_exit:
+            server.force_exit = True
+        server.should_exit = True
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _request_stop)
+
+    # Printed only now: the server is actually accepting connections and a
+    # Ctrl-C from here on takes the graceful path (a Ctrl-C during startup
+    # still hard-exits via uvicorn — nothing to clean up that early).
+    print(
+        f"Voice agent ready. Open http://{args.host}:{args.port}/client/ in your browser. "
+        "Ctrl-C to end the session (writes the lead report).",
+        flush=True,
+    )
+    try:
+        await serve_task
+    finally:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.remove_signal_handler(sig)
