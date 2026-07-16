@@ -2,7 +2,7 @@
 
 On session end, summarize the conversation into a lead report + structured insights
 and write out/session-<ts>.json (a local mock-CRM sink). Schema mirrors the
-qualification fields observed in the real product (brain teardown):
+qualification fields observed during a hands-on demo of the real product:
 lead_status, prospect_context, icp_classification, current_state, pain_points,
 use_case, questions_and_answers, next_step, plus a free-text summary.
 

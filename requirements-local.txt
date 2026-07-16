@@ -1,3 +1,6 @@
 # Extras for PROVIDER_MODE=local (heavier; optional). Run Ollama separately.
-# Installs faster-whisper (STT) and Kokoro (TTS) so the demo runs with zero API keys.
+# Installs Whisper STT + Kokoro TTS so the demo runs with zero API keys.
 pipecat-ai[whisper,kokoro]==1.5.0
+# On Apple Silicon, pipecat's whisper module also imports mlx_whisper at module
+# load (and the MLX backend is the faster choice there anyway).
+pipecat-ai[mlx-whisper]==1.5.0; sys_platform == "darwin" and platform_machine == "arm64"

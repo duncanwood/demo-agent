@@ -60,7 +60,15 @@ def validate_for_mode() -> None:
 
 def make_stt():
     if settings.provider_mode == "local":
-        from pipecat.services.whisper.stt import WhisperSTTService  # needs [whisper] extra
+        import platform
+
+        # needs [whisper] extra; on Apple Silicon also [mlx-whisper] (see
+        # requirements-local.txt) — and there the Metal-accelerated MLX backend
+        # is the better realtime choice. Models auto-download on first use.
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            from pipecat.services.whisper.stt import WhisperSTTServiceMLX
+            return WhisperSTTServiceMLX()
+        from pipecat.services.whisper.stt import WhisperSTTService
         return WhisperSTTService()
     from pipecat.services.deepgram.stt import DeepgramSTTService
     return DeepgramSTTService(api_key=os.environ["DEEPGRAM_API_KEY"])

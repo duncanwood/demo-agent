@@ -1,7 +1,7 @@
 # demo-agent — design spec
 
 **Status:** LOCKED (2026-07-16). Decisions resolved (§6). Ordered tasks in
-[BUILD_PLAN.md](BUILD_PLAN.md); start-here handoff in [../HANDOFF.md](../HANDOFF.md).
+[BUILD_PLAN.md](BUILD_PLAN.md).
 
 ## 1. Goal
 

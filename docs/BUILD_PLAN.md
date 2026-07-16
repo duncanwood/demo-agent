@@ -95,7 +95,7 @@ B4 acceptance criteria. Remaining B6 work is live tuning after the first end-to-
 **Goal:** capture the demo outcome.
 **Deliver:** `src/enrichment/report.py` — on session end, LLM produces a summary + structured
 insights (intent, interests, questions asked, suggested next step) → `out/session-<ts>.json`.
-Schema mirrors the qualification fields observed in the real product (see brain teardown).
+Schema mirrors the qualification fields observed during a hands-on demo of the real product.
 **Done when:** a well-formed JSON report is written after a demo. **Depends:** B4.
 
 ## B8 — Providers & config  *(T2)*
