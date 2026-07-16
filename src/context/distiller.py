@@ -57,6 +57,12 @@ async def summarize_page_text(title: str, description: str, text: str, *, comple
     standalone `_render` above can only see what an unauthenticated visitor
     sees — for gated apps that's just the sign-in page)."""
     complete = complete or _default_complete
+    if len((text or "").strip()) < 150:
+        # Don't ask the LLM to summarize a skeleton — it narrates its own
+        # confusion ("the page content is insufficient...") straight into the
+        # agent's product context. An empty brief has a safe fallback; use it.
+        print(f"distiller: page text too thin to summarize ({len((text or '').strip())} chars)")
+        return ""
     try:
         user = f"Page title: {title}\nMeta description: {description}\nPage text:\n{text}"
         return await complete(_SYSTEM_PROMPT, user, max_tokens=400)

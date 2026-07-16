@@ -225,6 +225,11 @@ async def main() -> None:
         if settings.target_url:
             await controller.navigate(settings.target_url)
             await _ensure_logged_in(controller, settings)
+            # SPAs keep rendering long after navigation "completes" — don't
+            # read context (or start the demo) off a half-painted skeleton.
+            if not await controller.wait_for_content():
+                print("demo-agent: page content still thin after 10s — continuing anyway.",
+                      flush=True)
 
         brief = await _build_product_brief(controller, settings)
         print(
@@ -251,7 +256,10 @@ async def main() -> None:
         finally:
             client_opener.cancel()
     finally:
-        await controller.stop()
+        # The lead report FIRST — it needs only the captured context, and a
+        # terminal Ctrl-C delivers SIGINT to the whole process group, so the
+        # browser may already be dead and its teardown must not cost us the
+        # report (it did once: CancelledError, session lost).
         transcript = _extract_transcript(session_contexts[-1]) if session_contexts else []
         if transcript:
             try:
@@ -267,6 +275,10 @@ async def main() -> None:
                     webbrowser.open(html_path.resolve().as_uri())
             except Exception as e:  # a failed report must not mask the real exit reason
                 print(f"demo-agent: enrichment failed ({e})", flush=True)
+        try:
+            await asyncio.wait_for(controller.stop(), timeout=8)
+        except Exception:
+            pass  # browser may have died with the process group — nothing to clean
 
 
 if __name__ == "__main__":

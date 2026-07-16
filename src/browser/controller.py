@@ -119,7 +119,9 @@ class BrowserController:
                 continue
             try:
                 await closer()
-            except PlaywrightError:
+            except Exception:
+                # A terminal Ctrl-C hits the whole process group, so the
+                # browser may already be gone — teardown never raises.
                 pass
         self._pw = self._browser = self._context = self._page = None
         self._refs, self._seen_refs = {}, set()
@@ -149,7 +151,36 @@ class BrowserController:
     async def read_page(self) -> dict:
         return await self._snapshot()
 
+    async def wait_for_content(self, *, min_chars: int = 150, timeout_s: float = 10.0) -> bool:
+        """Wait until the page shows real content (body text >= min_chars).
+
+        SPAs render well after domcontentloaded — with a restored auth session
+        the app may still be painting its skeleton when we'd otherwise read it
+        (which once produced a 'page content is insufficient' product brief).
+        Returns False on timeout; never raises."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                text = await self._require_page().evaluate(
+                    "() => (document.body && document.body.innerText || '').trim().length"
+                )
+                if text >= min_chars:
+                    return True
+            except (PlaywrightError, ControllerError):
+                pass
+            await asyncio.sleep(0.4)
+        return False
+
     async def _snapshot(self) -> dict:
+        snap = await self._snapshot_once()
+        if not snap["elements"]:
+            # Mid-transition SPA frame (view swap, lazy render): give it a beat
+            # and look again rather than telling the LLM the page is empty.
+            await asyncio.sleep(1.0)
+            snap = await self._snapshot_once()
+        return snap
+
+    async def _snapshot_once(self) -> dict:
         page = self._require_page()
         await self._ensure_cursor()
         self._seen_refs |= self._refs.keys()
