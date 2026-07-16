@@ -113,6 +113,17 @@ async def _build_product_brief(controller, settings) -> str:
     return ""
 
 
+def _port_in_use(port: int = 7860) -> bool:
+    import socket
+
+    with socket.socket() as s:
+        try:
+            s.bind(("localhost", port))
+            return False
+        except OSError:
+            return True
+
+
 async def main() -> None:
     from src.agent.prompts import build_system_prompt
     from src.agent.tools import register_browser_tools
@@ -121,6 +132,17 @@ async def main() -> None:
     from src.enrichment.report import write_report
     from src.setup.first_run import needs_setup, run_first_run_setup
     from src.voice.pipeline import run_voice_agent
+
+    # Fail fast and loud on a busy port — otherwise the browser/login/distill
+    # startup runs for ~20s and THEN dies on bind, while a stale server keeps
+    # serving a mismatched client UI (a confusing "audio won't connect" state).
+    if _port_in_use():
+        print(
+            "demo-agent: port 7860 is already in use — another demo-agent (or a "
+            "leftover one) is running. Stop it first:  lsof -ti :7860 | xargs kill",
+            flush=True,
+        )
+        raise SystemExit(1)
 
     setup_ran = False
     if needs_setup():
