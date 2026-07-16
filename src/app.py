@@ -25,6 +25,43 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
+from datetime import datetime
+
+
+class _TeeLog:
+    """Mirror a stream into the run log, adding per-line timestamps (file only —
+    the terminal stays clean). pipecat/uvicorn lines carry their own stamps; the
+    demo-agent's own prints get theirs from here."""
+
+    def __init__(self, stream, file) -> None:
+        self._s, self._f, self._nl = stream, file, True
+
+    def write(self, text: str) -> int:
+        self._s.write(text)
+        for part in text.splitlines(keepends=True):
+            if self._nl:
+                self._f.write(datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "] ")
+            self._f.write(part)
+            self._nl = part.endswith("\n")
+        return len(text)
+
+    def flush(self) -> None:
+        self._s.flush()
+        self._f.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
+def _install_run_log(path: str = "out/agent.log") -> None:
+    """Tee stdout+stderr into a persistent timestamped log so any run can be
+    diagnosed after the fact (terminal scrollback is not a log)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    f = open(path, "a", buffering=1)
+    f.write(f"\n===== run {datetime.now().isoformat(timespec='seconds')} =====\n")
+    sys.stdout = _TeeLog(sys.stdout, f)
+    sys.stderr = _TeeLog(sys.stderr, f)
 
 # Pipecat's dev runner auto-discovers a module-level `bot` on
 # `sys.modules["__main__"]` — which this file becomes when run as
@@ -51,12 +88,8 @@ def _extract_transcript(context) -> list[dict]:
     return turns
 
 
-async def _open_browser_when_up(url: str, *, timeout_s: float = 60.0) -> None:
-    """Open `url` in the default browser once it answers 200 (AUTO_OPEN=0 disables)."""
-    if os.getenv("AUTO_OPEN", "1") == "0":
-        return
-    import webbrowser
-
+async def _when_up(url: str, *, timeout_s: float = 60.0) -> bool:
+    """Poll `url` until it answers 200. Returns False on timeout."""
     import httpx
 
     deadline = asyncio.get_event_loop().time() + timeout_s
@@ -64,11 +97,31 @@ async def _open_browser_when_up(url: str, *, timeout_s: float = 60.0) -> None:
         while asyncio.get_event_loop().time() < deadline:
             try:
                 if (await client.get(url, timeout=2)).status_code == 200:
-                    webbrowser.open(url)
-                    return
+                    return True
             except Exception:
                 pass
             await asyncio.sleep(0.5)
+    return False
+
+
+async def _open_browser_when_up(url: str) -> None:
+    """Open `url` in the default browser once it serves (AUTO_OPEN=0 disables)."""
+    if os.getenv("AUTO_OPEN", "1") == "0":
+        return
+    import webbrowser
+
+    if await _when_up(url):
+        webbrowser.open(url)
+
+
+async def _connect_client_when_up(controller, url: str) -> None:
+    """Once the server serves, open the voice client in the controlled browser
+    with mic permission granted and Connect clicked — zero manual steps.
+    (AUTO_OPEN=0 disables; failures degrade to a printed open-it-yourself hint.)"""
+    if os.getenv("AUTO_OPEN", "1") == "0":
+        return
+    if await _when_up(url):
+        await controller.open_client_tab(url)
 
 
 async def _ensure_logged_in(controller, settings) -> None:
@@ -125,6 +178,10 @@ def _port_in_use(port: int = 7860) -> bool:
 
 
 async def main() -> None:
+    # Installed before the heavy imports so loguru (pipecat) binds the teed
+    # stderr and every line of the run lands in out/agent.log too.
+    _install_run_log()
+
     from src.agent.prompts import build_system_prompt
     from src.agent.tools import register_browser_tools
     from src.browser.controller import BrowserController
@@ -144,7 +201,6 @@ async def main() -> None:
         )
         raise SystemExit(1)
 
-    setup_ran = False
     if needs_setup():
         print(f"demo-agent: first-run setup — opening {_BASE_URL}/ (add your keys there).",
               flush=True)
@@ -154,7 +210,6 @@ async def main() -> None:
         if not completed:
             print("demo-agent: setup not completed — exiting.", flush=True)
             return
-        setup_ran = True
 
     validate_for_mode()
 
@@ -185,16 +240,16 @@ async def main() -> None:
             register_browser_tools(llm, ctx, controller)
 
         print(f"demo-agent: starting voice loop (provider_mode={settings.provider_mode})", flush=True)
-        # After first-run setup, the setup page's own success screen already
-        # redirects its tab to the client — don't open a duplicate.
-        client_opener = None
-        if not setup_ran:
-            client_opener = asyncio.create_task(_open_browser_when_up(f"{_BASE_URL}/client/"))
+        # The voice client opens as a second tab of the controlled browser with
+        # mic permission pre-granted and Connect auto-clicked. (After first-run
+        # setup, the setup page also redirects its own tab there — harmless.)
+        client_opener = asyncio.create_task(
+            _connect_client_when_up(controller, f"{_BASE_URL}/client/")
+        )
         try:
             await run_voice_agent(register_tools=_register, system_prompt=system_prompt)
         finally:
-            if client_opener is not None:
-                client_opener.cancel()
+            client_opener.cancel()
     finally:
         await controller.stop()
         transcript = _extract_transcript(session_contexts[-1]) if session_contexts else []

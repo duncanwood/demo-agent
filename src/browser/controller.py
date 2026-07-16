@@ -270,6 +270,56 @@ class BrowserController:
         await self._settle()
         return await self._snapshot()
 
+    async def open_client_tab(self, url: str) -> bool:
+        """Open the voice-client UI in a second tab of the controlled browser,
+        grant it microphone permission (no browser prompt), and click Connect.
+
+        Keeps the whole demo in one window and removes the manual click — the
+        default-browser flow left users waiting for a connection that needed a
+        Connect click they didn't know about. Returns False (with a printed
+        hint) on any failure; never raises."""
+        if self._context is None:
+            return False
+        try:
+            origin = url.split("/client")[0]
+            await self._context.grant_permissions(["microphone"], origin=origin)
+            page = await self._context.new_page()
+            await page.goto(url, timeout=_TIMEOUT_MS, wait_until="domcontentloaded")
+            # Connect, then verify the session actually establishes (Disconnect
+            # button appears). First macOS run can stall on the OS-level mic
+            # dialog for Chromium — retry once, then tell the user what's up.
+            for attempt in (1, 2):
+                try:
+                    await page.get_by_role("button", name="Connect").click(timeout=10000)
+                except PlaywrightError:
+                    pass  # already connecting (button gone) — fall through to verify
+                try:
+                    await page.get_by_role("button", name="Disconnect").wait_for(
+                        state="visible", timeout=12000
+                    )
+                    print("demo-agent: voice client connected — say hello.", flush=True)
+                    return True
+                except PlaywrightError:
+                    if attempt == 1:
+                        print(
+                            "demo-agent: voice client not connected yet — if macOS is "
+                            "asking to allow the microphone for Chromium, click Allow.",
+                            flush=True,
+                        )
+            print(
+                f"demo-agent: could not auto-connect the voice client — open {url} "
+                "and click Connect (check the macOS microphone permission for Chromium).",
+                flush=True,
+            )
+            return False
+        except PlaywrightError as e:
+            print(
+                f"demo-agent: could not auto-connect the voice client ({e}) — "
+                f"open {url} and click Connect.",
+                flush=True,
+            )
+            return False
+
     async def login(self, email: str, password: str) -> dict:
         """Best-effort generic login on the CURRENT page: finds an email/text input and a
         password input via common selectors, fills both (cursor glide first), then submits
