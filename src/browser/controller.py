@@ -4,41 +4,313 @@ Drives a local headed Chromium and exposes a small, LLM-friendly action surface.
 Control is DOM/accessibility-based (element refs), NOT vision. A synthetic cursor
 (cursor.js) animates to each element before acting (B3).
 
-Contract:
-    await controller.start()                     # launch Chromium, inject cursor.js
-    await controller.navigate(url)
-    snapshot = await controller.read_page()      # -> [{ref, role, name, value?}]  (small!)
-    await controller.move_cursor_to(ref)         # animate the fake pointer (B3)
-    await controller.click(ref)
-    await controller.type(ref, text)
-    await controller.scroll(direction)
-    await controller.login(email, password)      # target app is gated (B2 note)
+Contract: start() / stop(); navigate(url), click(ref), type(ref, text), select(ref,
+option), scroll(dir), login(email, pw) each return a fresh read_page() snapshot;
+move_cursor_to(ref) just animates the pointer (B3, no return):
+    {"url": str, "title": str, "h1": str,
+     "elements": [{"ref": "e1", "role": "button", "name": "Sign in"}, ...]}
+Elements are capped (~60), deduped by (role, name), numbered fresh e1..eN every snapshot.
+Any action/navigate() invalidates the previous refs; a superseded ref raises
+ControllerError("stale ref — call read_page again").
 
-Notes:
-- read_page() must return a COMPACT list of interactive elements with stable refs
-  (map ref -> Playwright locator internally); do not dump raw HTML into the LLM.
-- Re-inject cursor.js on every 'load'/'framenavigated' so the pointer survives navigation.
-- Prefer accessibility snapshot / get_by_role for robust refs.
+- read_page() is a COMPACT interactive-element list (internal dict ref -> ElementHandle);
+  never dumps raw HTML into the LLM.
+- cursor.js is installed via context.add_init_script so it survives every navigation;
+  _ensure_cursor() re-injects it defensively if ever missing.
+- Every Playwright call carries an explicit timeout; "settle" never raises on timeout —
+  a live voice demo must not hang.
 """
 from __future__ import annotations
+
 from pathlib import Path
+from typing import Literal
+
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    ElementHandle,
+    Error as PlaywrightError,
+    Page,
+    Playwright,
+    async_playwright,
+)
 
 CURSOR_JS = (Path(__file__).parent / "cursor.js").read_text()
+
+_TIMEOUT_MS = 8000
+_SETTLE_TIMEOUT_MS = 4000
+_MAX_ELEMENTS = 60
+
+# Curated interactive-element sweep — visible elements only, per BUILD_PLAN B2.
+_SNAPSHOT_SELECTOR = (
+    "a, button, input, select, textarea, "
+    "[role=button], [role=link], [role=tab], [role=menuitem], "
+    "[role=checkbox], [role=combobox], [contenteditable]"
+)
+
+# Runs per-element inside the page: visibility check + {role, name} extraction.
+# name priority: aria-label > visible text > placeholder > value > title.
+_EXTRACT_JS = r"""
+(el) => {
+  const rect = el.getBoundingClientRect(), cs = getComputedStyle(el);
+  const visible = rect.width > 0 && rect.height > 0 &&
+    cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
+  if (!visible) return { visible: false };
+  const tag = el.tagName.toLowerCase(), type = (el.getAttribute('type') || '').toLowerCase();
+  const roleByTag = { a: 'link', button: 'button', select: 'combobox', textarea: 'textbox' };
+  const roleByType = { checkbox: 'checkbox', radio: 'radio', submit: 'button', button: 'button' };
+  const role = el.getAttribute('role') || roleByTag[tag] ||
+    (tag === 'input' ? roleByType[type] || 'textbox' : el.isContentEditable ? 'textbox' : tag);
+  const text = tag === 'select'
+    ? (el.options[el.selectedIndex] ? el.options[el.selectedIndex].text.trim() : '')
+    : (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+  const name = el.getAttribute('aria-label') || text || el.getAttribute('placeholder') ||
+    el.value || el.getAttribute('title') || '';
+  return { visible: true, role, name: String(name).trim().slice(0, 60) };
+}
+"""
+
+# Tried in order (not a single combined selector — a comma-selector returns the first
+# DOM-order match across *all* alternatives, which would defeat the priority order).
+_EMAIL_SELECTORS = ["input[type=email]", 'input[name*="email" i]', "input[type=text]"]
+_PASSWORD_SELECTOR = "input[type=password]"
+_SUBMIT_SELECTORS = ["button[type=submit]", "input[type=submit]", "form button", "button"]
+
+
+class ControllerError(Exception):
+    """Raised for any browser-action failure; message is meant to be read (and acted on)
+    by the LLM mid-demo, e.g. "no element e7 in current snapshot"."""
 
 
 class BrowserController:
     def __init__(self, *, headless: bool = False, storage_state: str | None = None) -> None:
         self.headless = headless
         self.storage_state = storage_state
-        # TODO(B2): hold Playwright, browser, context, page; ref->locator map.
+        self._pw: Playwright | None = None
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
+        self._refs: dict[str, ElementHandle] = {}
+        self._seen_refs: set[str] = set()
+        self._generation = 0
+
+    # -- lifecycle --------------------------------------------------------
 
     async def start(self) -> None:
-        raise NotImplementedError("B2: launch Chromium (headed), new context, inject CURSOR_JS.")
+        self._pw = await async_playwright().start()
+        self._browser = await self._pw.chromium.launch(headless=self.headless, timeout=_TIMEOUT_MS)
+        state = self.storage_state if self.storage_state and Path(self.storage_state).exists() else None
+        self._context = await self._browser.new_context(storage_state=state)
+        await self._context.add_init_script(CURSOR_JS)
+        self._page = await self._context.new_page()
+        await self._ensure_cursor()
 
-    async def read_page(self) -> list[dict]:
-        raise NotImplementedError("B2: return compact interactive-element list with refs.")
+    async def stop(self) -> None:
+        for closer in (
+            self._context.close if self._context else None,
+            self._browser.close if self._browser else None,
+            self._pw.stop if self._pw else None,
+        ):
+            if closer is None:
+                continue
+            try:
+                await closer()
+            except PlaywrightError:
+                pass
+        self._pw = self._browser = self._context = self._page = None
+        self._refs, self._seen_refs = {}, set()
+
+    def _require_page(self) -> Page:
+        if self._page is None:
+            raise ControllerError("controller not started — call start() first")
+        return self._page
+
+    async def _ensure_cursor(self) -> None:
+        page = self._require_page()
+        try:
+            has_cursor = await page.evaluate("() => !!window.__demoCursor")
+            if not has_cursor:
+                await page.evaluate(CURSOR_JS)
+        except PlaywrightError:
+            pass  # cosmetic only — never block the demo on the cursor overlay
+
+    async def _settle(self) -> None:
+        try:
+            await self._require_page().wait_for_load_state("domcontentloaded", timeout=_SETTLE_TIMEOUT_MS)
+        except PlaywrightError:
+            pass  # demos must not hang waiting for a page that never fully settles
+
+    # -- snapshot -----------------------------------------------------------
+
+    async def read_page(self) -> dict:
+        return await self._snapshot()
+
+    async def _snapshot(self) -> dict:
+        page = self._require_page()
+        await self._ensure_cursor()
+        self._seen_refs |= self._refs.keys()
+        self._generation += 1
+        self._refs = {}
+
+        elements: list[dict] = []
+        seen_keys: set[tuple[str, str]] = set()
+        handles = await page.query_selector_all(_SNAPSHOT_SELECTOR)
+        for handle in handles:
+            if len(elements) >= _MAX_ELEMENTS:
+                break
+            try:
+                data = await handle.evaluate(_EXTRACT_JS)
+            except PlaywrightError:
+                continue
+            if not data or not data.get("visible"):
+                continue
+            key = (data["role"], data["name"])
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            ref = f"e{len(elements) + 1}"
+            elements.append({"ref": ref, "role": data["role"], "name": data["name"]})
+            self._refs[ref] = handle
+        self._seen_refs |= self._refs.keys()
+
+        h1 = ""
+        h1_handle = await page.query_selector("h1")
+        if h1_handle is not None:
+            try:
+                h1 = (await h1_handle.inner_text()).strip()
+            except PlaywrightError:
+                h1 = ""
+        return {"url": page.url, "title": await page.title(), "h1": h1, "elements": elements}
+
+    def _resolve(self, ref: str) -> ElementHandle:
+        handle = self._refs.get(ref)
+        if handle is not None:
+            return handle
+        if ref in self._seen_refs:
+            raise ControllerError("stale ref — call read_page again")
+        raise ControllerError(f"no element {ref} in current snapshot")
+
+    async def _glide(self, handle: ElementHandle) -> None:
+        """Scroll the element into view and animate the synthetic cursor to its center."""
+        page = self._require_page()
+        try:
+            await handle.scroll_into_view_if_needed(timeout=_TIMEOUT_MS)
+            box = await handle.bounding_box()
+        except PlaywrightError as e:
+            raise ControllerError(f"could not locate element on screen: {e}") from e
+        if box is None:
+            raise ControllerError("element has no visible position (bounding box unavailable)")
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        await self._ensure_cursor()
+        await page.evaluate("([x, y]) => window.__demoCursor.moveTo(x, y)", [x, y])
+
+    # -- navigation / actions ------------------------------------------------
+
+    async def navigate(self, url: str) -> dict:
+        page = self._require_page()
+        try:
+            await page.goto(url, timeout=_TIMEOUT_MS, wait_until="domcontentloaded")
+        except PlaywrightError as e:
+            raise ControllerError(f"navigation to {url} failed: {e}") from e
+        await self._settle()
+        return await self._snapshot()
 
     async def move_cursor_to(self, ref: str) -> None:
-        raise NotImplementedError("B3: animate the synthetic cursor to the element center.")
+        await self._glide(self._resolve(ref))
 
-    # navigate / click / type / scroll / login — TODO(B2)
+    async def click(self, ref: str) -> dict:
+        handle = self._resolve(ref)
+        await self._glide(handle)
+        try:
+            await handle.click(timeout=_TIMEOUT_MS)
+        except PlaywrightError as e:
+            raise ControllerError(f"click on {ref} failed: {e}") from e
+        await self._settle()
+        return await self._snapshot()
+
+    async def type(self, ref: str, text: str) -> dict:
+        handle = self._resolve(ref)
+        await self._glide(handle)
+        try:
+            await handle.fill(text, timeout=_TIMEOUT_MS)
+        except PlaywrightError as e:
+            raise ControllerError(f"type into {ref} failed: {e}") from e
+        await self._settle()
+        return await self._snapshot()
+
+    async def select(self, ref: str, option: str) -> dict:
+        """Choose an option in a <select> by visible label, falling back to value
+        (Playwright's fill() rejects <select>; this is the dedicated path)."""
+        handle = self._resolve(ref)
+        await self._glide(handle)
+        try:
+            await handle.select_option(label=option, timeout=_TIMEOUT_MS)
+        except PlaywrightError:
+            try:
+                await handle.select_option(value=option, timeout=_TIMEOUT_MS)
+            except PlaywrightError as e:
+                raise ControllerError(f"select on {ref} failed — no option {option!r}: {e}") from e
+        await self._settle()
+        return await self._snapshot()
+
+    async def scroll(self, direction: Literal["up", "down"]) -> dict:
+        if direction not in ("up", "down"):
+            raise ControllerError(f"invalid scroll direction {direction!r} (use 'up' or 'down')")
+        page = self._require_page()
+        viewport = page.viewport_size or {"height": 800}
+        delta = int(viewport["height"] * 0.7)
+        try:
+            await page.mouse.wheel(0, -delta if direction == "up" else delta)
+        except PlaywrightError as e:
+            raise ControllerError(f"scroll failed: {e}") from e
+        await self._settle()
+        return await self._snapshot()
+
+    async def login(self, email: str, password: str) -> dict:
+        """Best-effort generic login on the CURRENT page: finds an email/text input and a
+        password input via common selectors, fills both (cursor glide first), then submits
+        via a submit-ish button or Enter. If self.storage_state is set, saves the
+        authenticated context to that path so later runs can skip login entirely.
+
+        Verified against the local test fixture (tests/fixture.html) only — the real
+        target app is gated behind self-serve signup and has no credentials configured;
+        this method has not been exercised against it.
+        """
+        page = self._require_page()
+        email_handle = None
+        for selector in _EMAIL_SELECTORS:
+            email_handle = await page.query_selector(selector)
+            if email_handle is not None:
+                break
+        password_handle = await page.query_selector(_PASSWORD_SELECTOR)
+        if email_handle is None or password_handle is None:
+            raise ControllerError("login: could not find email/password inputs on current page")
+
+        try:
+            await self._glide(email_handle)
+            await email_handle.fill(email, timeout=_TIMEOUT_MS)
+            await self._glide(password_handle)
+            await password_handle.fill(password, timeout=_TIMEOUT_MS)
+        except PlaywrightError as e:
+            raise ControllerError(f"login: failed to fill credentials: {e}") from e
+
+        submit_handle = None
+        for selector in _SUBMIT_SELECTORS:
+            submit_handle = await page.query_selector(selector)
+            if submit_handle is not None:
+                break
+        try:
+            if submit_handle is not None:
+                await self._glide(submit_handle)
+                await submit_handle.click(timeout=_TIMEOUT_MS)
+            else:
+                await password_handle.press("Enter", timeout=_TIMEOUT_MS)
+        except PlaywrightError as e:
+            raise ControllerError(f"login: submit failed: {e}") from e
+
+        await self._settle()
+        result = await self._snapshot()
+        if self.storage_state:
+            Path(self.storage_state).parent.mkdir(parents=True, exist_ok=True)
+            await self._context.storage_state(path=self.storage_state)
+        return result

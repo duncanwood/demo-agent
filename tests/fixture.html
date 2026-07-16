@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixture Dashboard</title>
+<style>
+  body { font-family: sans-serif; margin: 2rem; }
+  nav a { margin-right: 1rem; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="page-h1">Metric Dashboard</h1>
+</header>
+
+<nav>
+  <a href="#overview">Overview</a>
+  <a href="#reports">Reports</a>
+  <a href="#settings">Settings</a>
+  <a href="fixture2.html">Go to Fixture 2</a>
+</nav>
+
+<section>
+  <button id="mutate-btn" onclick="mutate()">Refresh Metrics</button>
+  <button onclick="exportReport()">Export Report</button>
+  <button onclick="clearStatus()">Clear</button>
+  <div id="status">idle</div>
+</section>
+
+<section>
+  <label for="search">Search</label>
+  <input id="search" type="text" placeholder="Search metrics">
+
+  <label for="range">Range</label>
+  <select id="range">
+    <option value="7d">Last 7 days</option>
+    <option value="30d">Last 30 days</option>
+    <option value="90d">Last 90 days</option>
+  </select>
+</section>
+
+<section id="login-section">
+  <form id="login-form" onsubmit="return doLogin(event)">
+    <label for="email">Email</label>
+    <input id="email" type="email" placeholder="you@example.com" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="Password" required>
+    <button type="submit">Log In</button>
+  </form>
+</section>
+
+<script>
+  function mutate() {
+    document.getElementById('status').textContent = 'refreshed';
+    document.title = 'Refreshed - Metric Dashboard';
+  }
+  function exportReport() {
+    document.getElementById('status').textContent = 'exported';
+  }
+  function clearStatus() {
+    document.getElementById('status').textContent = 'idle';
+  }
+  function doLogin(evt) {
+    evt.preventDefault();
+    document.getElementById('login-form').classList.add('hidden');
+    document.getElementById('page-h1').textContent = 'Metric Dashboard - Logged In';
+    document.title = 'Dashboard - Logged In';
+    return false;
+  }
+</script>
+</body>
+</html>
