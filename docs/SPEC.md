@@ -1,7 +1,7 @@
 # demo-agent — design spec
 
-**Status:** DRAFT. Architecture below is the proposed default. Two decisions are open and
-marked **[DECISION]** — resolve those and this becomes the build plan.
+**Status:** LOCKED (2026-07-16). Decisions resolved (§6). Ordered tasks in
+[BUILD_PLAN.md](BUILD_PLAN.md); start-here handoff in [../HANDOFF.md](../HANDOFF.md).
 
 ## 1. Goal
 
@@ -83,28 +83,23 @@ surface:
 - All provider choices behind a single `.env`; sensible defaults so it runs with minimal
   input.
 
-## 6. Open decisions
+## 6. Decisions (locked 2026-07-16)
 
-**[DECISION D1] Model-provider default.** All three model stages (STT/LLM/TTS) will be
-**provider-agnostic via `.env`** regardless — the question is what the default/quickstart
-targets:
-- **(a) Cloud default** (e.g. Deepgram STT, a fast cheap LLM, Cartesia/Deepgram TTS):
-  lightest install, best latency/quality for the graded demo, but the grader needs to drop
-  in API keys (free-tier credits cover it). *Recommended* — a smooth demo matters more than
-  avoiding keys, and keys can be provided.
-- **(b) Local default** (Whisper + Ollama + Piper/Kokoro, `SmallWebRTCTransport`): zero keys,
-  runs offline, but heavier install (GB-scale model downloads) and higher latency; reasoning
-  quality bounded by the local model.
-- Either way, ship the *other* mode as a documented one-flag toggle.
+**D1 — Model providers: cloud-default, provider-agnostic, local toggle.** All three stages
+(STT/LLM/TTS) are swappable via `.env`. The quickstart default targets **cloud** free-tier
+providers for smooth latency — default picks: **Deepgram** STT, **OpenAI** LLM (strong
+function-calling), **Cartesia** TTS. A documented one-flag **local** mode (Whisper STT +
+Ollama LLM + Kokoro/Piper TTS) runs with zero keys. Transport is `SmallWebRTCTransport` in
+both modes (no Daily account, no keys).
 
-**[DECISION D2] Scope tier / ambition.** How far to push (depends on the deadline, still
-unconfirmed):
+**D2 — Scope: ship T1 + T2, T3 as stretch.**
 - **T1 — Core loop:** voice + DOM-driven Chromium on the target app + single-URL context
-  distill + narrated navigation + synthetic cursor + grounded Q&A. Runnable, clean.
-- **T2 — + Enrichment:** post-call summary + structured insight extraction to JSON.
-- **T3 — + Polish:** barge-in tuning, shallow site crawl/RAG, configurable target URL beyond
-  the assessment app, tests, a recorded walkthrough.
-- *Recommended target:* **T1 + T2** as the submission, T3 as stretch.
+  distill + narrated navigation + synthetic cursor + grounded Q&A.
+- **T2 — Enrichment:** post-call summary + structured insight extraction to local JSON.
+- **T3 — Stretch:** barge-in tuning, shallow site crawl/RAG, configurable target beyond the
+  assessment app, tests, a recorded walkthrough.
+
+No deadline set yet — building to a natural stopping point first.
 
 ## 7. Stack summary
 

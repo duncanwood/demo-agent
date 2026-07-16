@@ -1,0 +1,3 @@
+# Extras for PROVIDER_MODE=local (heavier; optional). Run Ollama separately.
+# Installs faster-whisper (STT) and Kokoro (TTS) so the demo runs with zero API keys.
+pipecat-ai[whisper,kokoro]==1.5.0
