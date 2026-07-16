@@ -1,0 +1,25 @@
+# working research (Karumi teardown — not part of the deliverable)
+/_research/
+
+# secrets & config
+.env
+.env.local
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# node (if a web client is added)
+node_modules/
+
+# local model weights / caches
+models/
+*.gguf
+
+# media / scratch
+*.wav
+*.mkv
+.DS_Store
