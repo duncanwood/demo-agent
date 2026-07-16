@@ -36,8 +36,12 @@ a saved session from a previous run (`.auth-state.json`) → credentials from
 saves the session for next time, and continues. `make reset-auth` forgets the
 saved session.
 
-End the session with Ctrl-C — the lead report is written to
-`out/session-<timestamp>.json`.
+**After the call:** Ctrl-C ends the session gracefully, writes
+`out/session-<timestamp>.json` (structured lead report + full transcript), and
+opens a **post-call report page** — lead status, prospect profile, pain points,
+the questions asked with answers given, a suggested next step, and the
+transcript. `make report` reopens the newest one; every run also logs to
+`out/agent.log` with timestamps.
 
 ## Configuration (`.env`)
 

@@ -257,6 +257,14 @@ async def main() -> None:
             try:
                 path = await write_report(transcript)
                 print(f"demo-agent: lead report written -> {path}", flush=True)
+                from pathlib import Path as _Path
+
+                from src.enrichment.view import render
+                html_path = render(_Path(path))
+                print(f"demo-agent: post-call page -> {html_path}", flush=True)
+                if os.getenv("AUTO_OPEN", "1") != "0":
+                    import webbrowser
+                    webbrowser.open(html_path.resolve().as_uri())
             except Exception as e:  # a failed report must not mask the real exit reason
                 print(f"demo-agent: enrichment failed ({e})", flush=True)
 
