@@ -16,16 +16,28 @@ Prerequisites: Python **3.11+**, `make`. (Uses ~2 GB disk for the venv + Chromiu
 
 ```bash
 make setup          # venv + deps + Chromium + scaffolds .env
-$EDITOR .env        # add the three API keys (all have free tiers) + app login
-make run            # starts the browser + voice server
+make run            # everything else is guided
 ```
 
-Then open **http://localhost:7860/client/**, click Connect, and start talking.
-The agent greets you, asks what you care about, and gives a tailored tour of the
-target app while you watch it drive. Interrupt it any time — it stops and listens.
+On a first run with no keys, a **setup page opens in your browser**: paste your
+three provider keys (all have free tiers; each is validated live), optionally the
+target app's login, or click "use local mode" to run with no keys at all. Keys are
+written to your local `.env` — you can also just edit `.env` by hand and skip the
+page entirely.
 
-When the server stops (Ctrl-C after the conversation), the lead report is written
-to `out/session-<timestamp>.json`.
+Then everything opens itself: the headed Chromium on the target app, and the
+**voice client tab** once the server is up. Click Connect, allow the microphone,
+and the agent greets you, asks what you care about, and gives a tailored tour
+while you watch it drive. Interrupt it any time — it stops and listens.
+
+**Logging into the target app** happens on a ladder, whichever rung works first:
+a saved session from a previous run (`.auth-state.json`) → credentials from
+`.env` → **just log in yourself** in the Chromium window — the agent detects it,
+saves the session for next time, and continues. `make reset-auth` forgets the
+saved session.
+
+End the session with Ctrl-C — the lead report is written to
+`out/session-<timestamp>.json`.
 
 ## Configuration (`.env`)
 
@@ -35,11 +47,12 @@ to `out/session-<timestamp>.json`.
 | `OPENAI_API_KEY` | cloud mode | The demo agent (LLM, function calling) |
 | `CARTESIA_API_KEY` | cloud mode | Text-to-speech |
 | `DEMO_TARGET_URL` | yes | The app to demo (default: the assessment app) |
-| `DEMO_LOGIN_EMAIL` / `DEMO_LOGIN_PASSWORD` | if app is gated | Best-effort login at startup |
-| `CONTEXT_URL` | no | Landing page to distill product context from (falls back to the target itself) |
-| `STORAGE_STATE` | no | Path for saved auth state — skips login on later runs |
+| `DEMO_LOGIN_EMAIL` / `DEMO_LOGIN_PASSWORD` | no | App login — omit to log in manually instead (auto-detected) |
+| `CONTEXT_URL` | no | Landing page to distill product context from (default: the logged-in app page itself) |
+| `STORAGE_STATE` | no | Saved auth state path (default `.auth-state.json`, gitignored) |
 | `PROVIDER_MODE` | no | `cloud` (default) or `local` (zero keys, see below) |
-| `OPENAI_MODEL`, `CARTESIA_VOICE_ID`, `OLLAMA_*` | no | Provider tuning |
+| `AUTO_OPEN` | no | `0` disables the self-opening browser tabs |
+| `OPENAI_MODEL`, `CARTESIA_VOICE_ID`, `OLLAMA_*` | no | Provider tuning (voice defaults to a sensible pick) |
 
 ## Local mode (no API keys)
 
@@ -89,6 +102,14 @@ Design choices worth knowing:
   `{"error": ...}` strings — nothing a tool does can crash the session.
 - **Providers are swappable.** STT/LLM/TTS are built by a small factory switched
   on `PROVIDER_MODE`; the one-shot calls (distiller, report) ride the same switch.
+- **Context comes from behind the login.** For gated apps an unauthenticated
+  fetch sees only the sign-in screen, so by default the brief is distilled from
+  the page the agent is actually logged into; `CONTEXT_URL` overrides with a
+  public page when you want marketing-site framing.
+- **Setup is part of the product.** Missing keys produce a local setup page
+  (validated live, written to `.env`, never leaving the machine), not a stack
+  trace; a missing login becomes "log in yourself, I'll notice" rather than a
+  crash. Ctrl-C is a graceful path: the browser closes and the report writes.
 
 ## Tests
 
@@ -96,7 +117,7 @@ Four self-contained smoke suites run against a bundled fixture page — no API k
 and no network needed:
 
 ```bash
-for t in browser tools distiller report; do .venv/bin/python tests/${t}_smoke.py; done
+for t in browser tools distiller report login_wait setup; do .venv/bin/python tests/${t}_smoke.py; done
 ```
 
 ## Layout
@@ -117,10 +138,15 @@ tests/                fixture page + smoke suites
 ## Troubleshooting
 
 - **`Python 3.11+ required`** — rerun as `make setup PYTHON=/path/to/python3.11+`.
-- **`missing required environment variable(s)`** — fill the keys in `.env`, or set
-  `PROVIDER_MODE=local`.
 - **Login page still showing** — the target app is self-serve signup; create an
-  account first and put the credentials in `.env`.
+  account, then either log in in the Chromium window (auto-detected) or put the
+  credentials in `.env`.
+- **Wrong account / stale session** — `make reset-auth`, then run again.
+- **Login detection on SSO/magic-link apps** — detection watches for the password
+  field to disappear, so password-less flows may be marked logged-in early; use
+  `.env` credentials or `STORAGE_STATE` for those.
 - **Port 7860 busy** — stop the other process; the client URL is fixed to 7860.
+- **Stopping** — one Ctrl-C ends gracefully (writes the report); a second one
+  force-exits.
 - **A `libav`/objc duplicate-class warning at startup** — harmless, from a
   transitive audio dependency.

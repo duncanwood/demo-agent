@@ -24,3 +24,4 @@ models/
 *.mkv
 .DS_Store
 out/
+.auth-state.json

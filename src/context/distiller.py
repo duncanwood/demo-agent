@@ -38,13 +38,26 @@ _SYSTEM_PROMPT = (
 
 async def distill_product_context(url: str, *, complete=None) -> str:
     """Render `url`, extract its visible text, and summarize it into a product brief."""
-    complete = complete or _default_complete
     try:
         title, description, text = await _render(url)
-        user = f"Page title: {title}\nMeta description: {description}\nPage text:\n{text}"
-        return await complete(_SYSTEM_PROMPT, user, max_tokens=400)
     except Exception as e:  # deliberately broad — any failure here must not block demo startup
         print(f"distiller: could not build product brief for {url!r}: {e}")
+        return ""
+    return await summarize_page_text(title, description, text, complete=complete)
+
+
+async def summarize_page_text(title: str, description: str, text: str, *, complete=None) -> str:
+    """Summarize already-extracted page text into a product brief.
+
+    Used directly by app startup with the LOGGED-IN app page's text (the
+    standalone `_render` above can only see what an unauthenticated visitor
+    sees — for gated apps that's just the sign-in page)."""
+    complete = complete or _default_complete
+    try:
+        user = f"Page title: {title}\nMeta description: {description}\nPage text:\n{text}"
+        return await complete(_SYSTEM_PROMPT, user, max_tokens=400)
+    except Exception as e:  # same failure policy: an LLM error must not block startup
+        print(f"distiller: could not build product brief: {e}")
         return ""
 
 

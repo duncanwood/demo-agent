@@ -20,5 +20,8 @@ local-setup:  ## install local-model extras (Whisper + Kokoro); run Ollama separ
 run:  ## launch the demo agent
 	$(PY) -m src.app
 
+reset-auth:  ## forget the saved app login (next run logs in fresh)
+	rm -f .auth-state.json
+
 clean:
 	rm -rf .venv out/*.json **/__pycache__

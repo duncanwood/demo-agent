@@ -22,6 +22,9 @@ ControllerError("stale ref — call read_page again").
 """
 from __future__ import annotations
 
+import asyncio
+import re
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -40,6 +43,7 @@ CURSOR_JS = (Path(__file__).parent / "cursor.js").read_text()
 _TIMEOUT_MS = 8000
 _SETTLE_TIMEOUT_MS = 4000
 _MAX_ELEMENTS = 60
+_PAGE_TEXT_MAX_CHARS = 8000  # matches context/distiller.py's _MAX_CHARS cap
 
 # Curated interactive-element sweep — visible elements only, per BUILD_PLAN B2.
 _SNAPSHOT_SELECTOR = (
@@ -310,7 +314,77 @@ class BrowserController:
 
         await self._settle()
         result = await self._snapshot()
-        if self.storage_state:
+        await self._save_auth_state()
+        return result
+
+    # -- manual login / auth state -------------------------------------------
+
+    async def is_logged_in(self) -> bool:
+        """Heuristic: True iff the current page has no visible password input.
+        Limits: an app whose logged-out state has no password field (SSO-only,
+        magic-link) will false-positive as logged in; a page mid-navigation,
+        blank, or erroring counts as NOT logged in — any exception is swallowed
+        and returns False rather than raised, so callers can poll this safely.
+        """
+        if self._page is None:
+            return False
+        try:
+            for handle in await self._page.query_selector_all(_PASSWORD_SELECTOR):
+                data = await handle.evaluate(_EXTRACT_JS)
+                if data and data.get("visible"):
+                    return False
+            return True
+        except PlaywrightError:
+            return False
+
+    async def _save_auth_state(self) -> None:
+        """Persist the current context's storage state to self.storage_state, if
+        configured, so later runs can skip login. Best-effort: any failure is
+        caught and printed as a single warning line, never raised.
+        """
+        if not self.storage_state or self._context is None:
+            return
+        try:
             Path(self.storage_state).parent.mkdir(parents=True, exist_ok=True)
             await self._context.storage_state(path=self.storage_state)
-        return result
+        except (PlaywrightError, OSError) as e:
+            print(f"demo-agent: could not save auth state to {self.storage_state}: {e}")
+
+    async def wait_for_login(self, *, timeout_s: float = 300.0, poll_s: float = 2.0) -> bool:
+        """Wait for a human to log in manually on the CURRENT page (no credentials
+        configured). Returns True immediately if already logged in — covers a
+        restored storage_state — saving auth state either way. Otherwise prints
+        one waiting line and polls is_logged_in() every poll_s until it flips
+        true; returns False on timeout without raising — the caller decides
+        whether to proceed anyway.
+        """
+        if await self.is_logged_in():
+            await self._save_auth_state()
+            return True
+
+        print(
+            "demo-agent: no login configured — log in manually in the browser "
+            f"window (waiting up to {int(timeout_s)}s)..."
+        )
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            await asyncio.sleep(poll_s)
+            if await self.is_logged_in():
+                await self._settle()
+                print("demo-agent: login detected — continuing.")
+                await self._save_auth_state()
+                return True
+        return False
+
+    async def page_text(self) -> tuple[str, str]:
+        """Return (title, visible body text) of the CURRENT page, whitespace-
+        collapsed and capped at _PAGE_TEXT_MAX_CHARS — same normalization as
+        context/distiller.py's _normalize — for post-login context distillation.
+        """
+        page = self._require_page()
+        try:
+            title = await page.title()
+            text = await page.evaluate("() => document.body.innerText")
+        except PlaywrightError as e:
+            raise ControllerError(f"page_text failed: {e}") from e
+        return title.strip(), re.sub(r"\s+", " ", text or "").strip()[:_PAGE_TEXT_MAX_CHARS]
