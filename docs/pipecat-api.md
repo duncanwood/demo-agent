@@ -6,8 +6,8 @@ and re-verify with `.venv/bin/python -c "import ..."` if you bump the version.
 
 ## Install
 ```bash
-# cloud default (what B1 uses)
-pip install "pipecat-ai[webrtc,openai,deepgram,cartesia,silero]"
+# cloud default — [runner] is REQUIRED for the dev server (fastapi/uvicorn/prebuilt client UI)
+pip install "pipecat-ai[webrtc,runner,openai,deepgram,cartesia,silero]"
 playwright install chromium
 # local mode extras (B8)
 pip install "pipecat-ai[whisper,kokoro]"   # + run Ollama separately
@@ -16,15 +16,20 @@ pip install "pipecat-ai[whisper,kokoro]"   # + run Ollama separately
 ## Verified imports (OK)
 ```python
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.task import PipelineTask, PipelineParams
-from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker   # live names (see gotchas)
+from pipecat.workers.runner import WorkerRunner
+from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+from pipecat.runner.types import SmallWebRTCRunnerArguments
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.aggregators.llm_context import (
     LLMContext, LLMContextMessage, LLMContextToolChoice,
+)
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair, LLMUserAggregatorParams,
 )
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
@@ -32,32 +37,42 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 ```
 
 ## Changed / gotchas
+- **`PipelineTask` / `PipelineRunner` are deprecation shims** (since 1.3.0, removed in
+  2.0.0): `pipecat.pipeline.task` / `pipecat.pipeline.runner` just subclass the live
+  `PipelineWorker` / `WorkerRunner` (imports above). Also: pass workers via
+  `runner.add_workers(worker)` then `runner.run()` — `run(worker)` is separately deprecated.
+- **VAD moved off the transport:** `TransportParams` has no `vad_analyzer` field. Wire VAD
+  as `LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())` → `user_params=` of
+  `LLMContextAggregatorPair`. Interruptions (barge-in) default ON once VAD is wired.
+- **Aggregator pair:** `user, assistant = LLMContextAggregatorPair(context, user_params=…)`
+  (tuple-unpacks; or `.user()` / `.assistant()`). `create_context_aggregator` does not exist.
 - **Old transport path is gone:** `pipecat.transports.network.small_webrtc` → MISS. Use
   `pipecat.transports.smallwebrtc.{transport,connection}`.
-- **Context class moved:** `pipecat.processors.aggregators.openai_llm_context.OpenAILLMContext`
-  → MISS. Use the universal `LLMContext` (above).
+- **Context class moved:** `openai_llm_context.OpenAILLMContext` → MISS. Use `LLMContext`.
 - **Whisper needs its extra:** `WhisperSTTService` import fails until `pipecat-ai[whisper]`
   (pulls `faster_whisper`) is installed.
 - Harmless startup noise: an `av`/`cv2` duplicate-dylib objc warning; ignore.
 
+## Dev runner (resolved — how src/voice/pipeline.py serves the client)
+- Entrypoint contract: define `async def bot(runner_args: SmallWebRTCRunnerArguments)` at
+  module level; the runner discovers it via `sys.modules["__main__"].bot` (src/app.py
+  re-exports it). Called once per WebRTC connection; build the transport yourself:
+  `SmallWebRTCTransport(webrtc_connection=runner_args.webrtc_connection, params=TransportParams(...))`.
+- `pipecat.runner.run.main()` blocks (calls `uvicorn.run` → `asyncio.run`) — unusable inside
+  a running loop. `run_voice_agent` instead calls `_configure_server_app(args)` (same route
+  setup) and awaits `uvicorn.Server(Config(app,…)).serve()`. Pinned to ==1.5.0 since
+  `_configure_server_app` is private-by-convention.
+- Client UI: `http://localhost:7860/client/` (`/` 307-redirects there). Defaults
+  `RUNNER_HOST`/`RUNNER_PORT` = localhost:7860. `/status` lists mounted transports.
+- The server also mounts non-WebRTC routes (`/ws` etc.) by default; `bot()` guards with an
+  `isinstance` check and ignores non-SmallWebRTC connections.
+
 ## Function calling (browser tools — B4)
 - `OpenAILLMService` has **`register_function`** (verified): register a handler per tool name.
 - Define schemas with `FunctionSchema` / `ToolsSchema` from `pipecat.adapters.schemas.*`,
-  attach to the `LLMContext`.
-
-## Resolve from the official small-webrtc example (do this at the start of B1)
-Two symbols weren't nailed down by introspection — copy them from the current example rather
-than guessing:
-1. **Context aggregator pair** — `OpenAILLMService.create_context_aggregator` does **not**
-   exist in 1.5.0; the universal-context aggregator factory lives elsewhere (see
-   `pipecat.processors.aggregators.llm_response_universal` / `llm_context`). Confirm the exact
-   call the example uses to get user/assistant aggregators around the `LLMContext`.
-2. **Dev runner / signaling** — `pipecat.runner` provides the SmallWebRTC development runner
-   (`run`, `types`, `utils` submodules) that serves the web client and handles WebRTC
-   signaling. Confirm the entrypoint + how `TransportParams` (VAD, audio in/out) are passed.
-
-Official example to mirror: pipecat-ai/pipecat `examples/` → the SmallWebRTC / foundational
-voice-bot sample for 1.5.x.
+  attach to the `LLMContext`. B4: verify the exact attach point (constructor arg vs setter)
+  and the handler signature (`FunctionCallParams`: `.arguments`, `await .result_callback(...)`)
+  against installed source before wiring.
 
 ## Local services available (verified in `pipecat.services`)
 `whisper`, `moonshine` (local STT) · `ollama` (local LLM) · `kokoro`, `piper` (local TTS) —

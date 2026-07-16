@@ -10,6 +10,7 @@ version when wiring B1/B8 (e.g. `.venv/bin/python -c "from pipecat.services.cart
 """
 from __future__ import annotations
 import os
+import sys
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
@@ -30,6 +31,31 @@ class Settings:
 
 
 settings = Settings()
+
+
+def validate_for_mode() -> None:
+    """Fail fast with one friendly line if required keys are missing for the active mode.
+
+    Cloud mode needs the three keys make_stt/make_llm/make_tts read in their cloud
+    branches; local mode needs none. Call this before constructing any pipecat
+    service so a misconfigured .env produces a clean message instead of a
+    KeyError traceback from inside make_stt/make_llm/make_tts.
+    """
+    if settings.provider_mode != "cloud":
+        return
+    required = {
+        "DEEPGRAM_API_KEY": "Deepgram STT",
+        "OPENAI_API_KEY": "OpenAI LLM",
+        "CARTESIA_API_KEY": "Cartesia TTS",
+    }
+    missing = [f"{key} ({label})" for key, label in required.items() if not os.getenv(key)]
+    if missing:
+        print(
+            "demo-agent: missing required environment variable(s): "
+            + ", ".join(missing)
+            + " -- set them in .env (see .env.example), or set PROVIDER_MODE=local to run without cloud keys."
+        )
+        sys.exit(1)
 
 
 def make_stt():

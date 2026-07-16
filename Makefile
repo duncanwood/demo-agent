@@ -5,6 +5,7 @@ PIP = .venv/bin/pip
 
 .PHONY: setup local-setup run clean
 setup:  ## create venv, install deps, install Chromium, scaffold .env
+	@$(PYTHON) -c 'import sys; sys.version_info >= (3, 11) or sys.exit("ERROR: Python 3.11+ required, found %d.%d — rerun as: make setup PYTHON=/path/to/python3.11+" % sys.version_info[:2])'
 	$(PYTHON) -m venv .venv
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt

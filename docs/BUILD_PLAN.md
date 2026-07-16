@@ -4,6 +4,20 @@ Ordered, session-sized tasks for the **T1 + T2** target (see [SPEC.md](SPEC.md) 
 Each task is scoped to one focused work session with explicit acceptance criteria, so an
 orchestrator can dispatch them against the dependency DAG below.
 
+**Status (2026-07-16):** B0 ✅ · B1 ✅ · B2 ✅ · B3 ✅ · B6 merged into B4 (see revisions).
+
+**Orchestration revisions (2026-07-16, locked):**
+- **R1** — B5 distiller fetches via *Playwright* (headless render → visible text), not httpx:
+  the target and typical landing pages are JS-rendered SPAs. httpx dropped from deps.
+- **R2** — B6 is absorbed into B4: the demo-flow system prompt + guardrails are
+  orchestrator-authored in `src/agent/prompts.py`; B4 wires mechanics around it. Code-side
+  guardrails (stale refs, selector-failure recovery) live in the tools layer.
+- **R3** — no per-turn DOM injection into context. `read_page` is a tool, and every action
+  tool returns a compact post-action snapshot as its result. Keeps context small and voice
+  latency low.
+- **R4** — `src/llm_oneshot.py` (shared, done) is the one-shot prompt→text helper for B5+B7,
+  switching on `PROVIDER_MODE` (OpenAI client → api.openai.com or Ollama's /v1).
+
 ## Dependency DAG
 
 ```
@@ -68,17 +82,14 @@ responsive.
 
 ## B5 — Context distiller
 **Goal:** the "learns about the product as the demo starts" behavior.
-**Deliver:** `src/context/distiller.py` — fetch a configured URL (target app and/or a company
-landing page), LLM-summarize into a product brief, inject into the agent system prompt at
-startup. **Done when:** changing the configured URL visibly changes how the agent frames the
-demo. **Depends:** B4.
+**Deliver:** `src/context/distiller.py` — render a configured URL headlessly via Playwright
+(R1), extract visible text, summarize via `llm_oneshot.complete` (R4) into a product brief
+injected into `prompts.build_system_prompt`. **Done when:** changing the configured URL
+visibly changes how the agent frames the demo. **Depends:** B4.
 
-## B6 — Demo flow + guardrails
-**Goal:** the interaction loop feels like a real demo.
-**Deliver:** system prompt + flow logic: greet (by name if provided) → ask intent →
-steerable narrated tour → grounded Q&A → graceful wrap-up. Guardrails: don't leak the system
-prompt, decline off-topic, recover from failed selectors. **Done when:** it matches the loop
-in the SPEC and stays interruptible/steerable. **Depends:** B4.
+## B6 — Demo flow + guardrails  *(merged into B4 — R2)*
+Prompt + guardrails authored in `src/agent/prompts.py`; mechanics + failure recovery are
+B4 acceptance criteria. Remaining B6 work is live tuning after the first end-to-end run.
 
 ## B7 — Enrichment sink  *(T2)*
 **Goal:** capture the demo outcome.
