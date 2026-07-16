@@ -26,10 +26,15 @@ from __future__ import annotations
 import asyncio
 import os
 
-# Re-exported so pipecat's dev runner can auto-discover it on this module: it
-# looks for a module-level `bot` on `sys.modules["__main__"]`, which this file
-# becomes when run as `python -m src.app` (see voice/pipeline.py docstring).
-from src.voice.pipeline import bot  # noqa: F401
+# Pipecat's dev runner auto-discovers a module-level `bot` on
+# `sys.modules["__main__"]` — which this file becomes when run as
+# `python -m src.app` (see voice/pipeline.py docstring). This thin wrapper
+# keeps that contract WITHOUT importing the heavy pipecat stack at module
+# import time: on a cold venv those imports take 10-20s, which would delay
+# the first-run setup page (served before any pipecat code is needed).
+async def bot(runner_args):  # noqa: ANN001 — signature owned by pipecat's runner
+    from src.voice.pipeline import bot as _bot
+    return await _bot(runner_args)
 
 _BASE_URL = "http://localhost:7860"
 
