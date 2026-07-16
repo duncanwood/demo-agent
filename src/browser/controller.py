@@ -362,6 +362,18 @@ class BrowserController:
         except PlaywrightError as e:
             raise ControllerError(f"login: submit failed: {e}") from e
 
+        # Auth is often an async round-trip well past domcontentloaded — a blind
+        # settle here once captured the sign-in page as "logged in" (and saved a
+        # pre-auth storage state that could never restore). Verify for real.
+        deadline = time.monotonic() + 12.0
+        while time.monotonic() < deadline:
+            if await self.is_logged_in():
+                break
+            await asyncio.sleep(0.5)
+        else:
+            raise ControllerError(
+                "login: still on a sign-in page after 12s — check the credentials"
+            )
         await self._settle()
         result = await self._snapshot()
         await self._save_auth_state()

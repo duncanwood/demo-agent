@@ -228,7 +228,7 @@ async def main() -> None:
 
         brief = await _build_product_brief(controller, settings)
         print(
-            f"demo-agent: product brief ready ({len(brief)} chars)"
+            f"demo-agent: product brief ready ({len(brief)} chars): {brief[:120]}..."
             if brief else "demo-agent: no product brief — continuing without",
             flush=True,
         )

@@ -32,7 +32,11 @@ _SYSTEM_PROMPT = (
     "You prep a sales engineer for a live product demo. From the page text, write a "
     "compact product brief: what the product is, who it's for, the key features and "
     "value propositions, and any pricing/plan signals. Plain prose, no markdown, under "
-    "250 words. If the text is thin, say what IS known without inventing anything."
+    "250 words. If the text is thin, say what IS known without inventing anything. "
+    "IMPORTANT: the page <title> is often platform boilerplate (e.g. 'X Generated "
+    "App', a site-builder's name) — identify the product's ACTUAL name from the page "
+    "content itself (brand in the navigation, headings, or hero text) and use that "
+    "name throughout the brief."
 )
 
 
