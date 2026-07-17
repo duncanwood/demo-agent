@@ -49,6 +49,7 @@ from playwright.async_api import (
 
 CURSOR_JS = (Path(__file__).parent / "cursor.js").read_text()
 PANEL_JS = (Path(__file__).parent / "panel.js").read_text()
+CLIENT_SHIM_JS = (Path(__file__).parent / "client_shim.js").read_text()
 
 _TIMEOUT_MS = 8000
 _SETTLE_TIMEOUT_MS = 4000
@@ -217,6 +218,7 @@ class BrowserController:
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._page: Page | None = None
+        self._client_page: Page | None = None
         self._refs: dict[str, ElementHandle] = {}
         self._ref_names: dict[str, str] = {}
         self._seen_refs: set[str] = set()
@@ -233,6 +235,9 @@ class BrowserController:
         self._context = await self._browser.new_context(storage_state=state, no_viewport=True)
         await self._context.add_init_script(CURSOR_JS)
         await self._context.add_init_script(PANEL_JS)
+        # Origin-gated to localhost:7860 (the voice-client tab): getUserMedia
+        # wrapper so the sidebar can mute/unmute the mic deterministically.
+        await self._context.add_init_script(CLIENT_SHIM_JS)
         self._page = await self._context.new_page()
         await self._ensure_cursor()
         await self._ensure_panel()
@@ -252,6 +257,7 @@ class BrowserController:
                 # browser may already be gone — teardown never raises.
                 pass
         self._pw = self._browser = self._context = self._page = None
+        self._client_page = None
         self._refs, self._ref_names, self._seen_refs = {}, {}, set()
 
     def _require_page(self) -> Page:
@@ -307,6 +313,31 @@ class BrowserController:
             )
         except PlaywrightError:
             pass
+
+    async def set_mic_enabled(self, on: bool) -> int:
+        """Mute/unmute the live session's microphone by flipping track.enabled
+        in the voice-client tab (via client_shim.js). Returns the number of
+        audio tracks switched — 0 means no live mic stream (or the client tab
+        is gone). Never raises."""
+        if self._client_page is None:
+            return 0
+        try:
+            return await self._client_page.evaluate(
+                "(on) => window.__setMicEnabled ? window.__setMicEnabled(on) : 0", on
+            )
+        except PlaywrightError:
+            return 0
+
+    async def front_client(self) -> bool:
+        """Bring the live voice-client tab to the front (audio details live
+        there); returns False if the tab is gone. Never raises."""
+        if self._client_page is None:
+            return False
+        try:
+            await self._client_page.bring_to_front()
+            return True
+        except PlaywrightError:
+            return False
 
     async def poll_panel_command(self) -> str | None:
         """Read-and-clear the sidebar's pending command (e.g. "end" from the
@@ -515,6 +546,7 @@ class BrowserController:
             origin = url.split("/client")[0]
             await self._context.grant_permissions(["microphone"], origin=origin)
             page = await self._context.new_page()
+            self._client_page = page  # sidebar audio controls proxy to this tab
             await page.goto(url, timeout=_TIMEOUT_MS, wait_until="load")
             # exact=True everywhere: get_by_role's default substring matching
             # would make "Connect" also match "Disconnect".

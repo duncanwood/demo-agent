@@ -132,6 +132,12 @@ async def _connect_client_when_up(controller, url: str) -> None:
         )
         if await controller.open_client_tab(url):
             await controller.front_demo()
+            tracks = await controller.set_mic_enabled(True)
+            print(
+                f"demo-agent: mic stream live ({tracks} audio track(s))" if tracks
+                else "demo-agent: warning — no local mic stream detected (sidebar mute won't work)",
+                flush=True,
+            )
             await controller.panel("phase", "Live — say hello", "live")
             await controller.panel(
                 "hint",
@@ -144,15 +150,30 @@ async def _connect_client_when_up(controller, url: str) -> None:
 
 
 async def _panel_command_watcher(controller) -> None:
-    """Poll the demo page for sidebar commands. 'end' triggers the same
-    graceful shutdown as Ctrl-C — the report writes, everything closes."""
+    """Poll the demo page for sidebar commands: 'end' triggers the same
+    graceful shutdown as Ctrl-C; 'mute-toggle' flips the live mic tracks in
+    the client tab; 'front-client' brings the live audio panel forward."""
     from src.voice.pipeline import request_shutdown
 
+    mic_on = True
     while True:
-        if await controller.poll_panel_command() == "end":
+        cmd = await controller.poll_panel_command()
+        if cmd == "end":
             print("demo-agent: end requested from the demo page — shutting down.", flush=True)
             request_shutdown()
             return
+        if cmd == "mute-toggle":
+            mic_on = not mic_on
+            tracks = await controller.set_mic_enabled(mic_on)
+            if not tracks:
+                mic_on = True  # nothing switched — stay in the live state
+                await controller.panel("act", "Mute failed — no live mic stream")
+            else:
+                await controller.panel("act", "Mic unmuted" if mic_on else "Mic muted")
+            await controller.panel("micState", "live" if mic_on else "muted")
+        elif cmd == "front-client":
+            if not await controller.front_client():
+                await controller.panel("act", "Audio panel tab is gone")
         await asyncio.sleep(1.2)
 
 

@@ -24,7 +24,6 @@
   if (location.origin === "http://localhost:7860") return;
 
   const MAX_ACTS = 6;
-  const CLIENT_URL = "http://localhost:7860/client/";
   const PANEL_WIDTH = 280;
   const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
   const CSS = `
@@ -59,19 +58,22 @@
       color: #a9adb8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .act:first-child { color: #d7dae0; }
-    .controls { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); }
-    .end {
+    .controls { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); }
+    .row2 { display: flex; gap: 8px; }
+    .btn {
       all: unset; cursor: pointer; flex: 1; text-align: center; font-family: ${FONT};
+      font-size: 12px; font-weight: 600; color: #c3c6cd; background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.14); border-radius: 7px; padding: 7px 0;
+    }
+    .btn:hover { background: rgba(255,255,255,.12); color: #e6e7ea; }
+    .btn.muted { color: #f0a93b; border-color: rgba(240,169,59,.45); }
+    .end {
+      all: unset; cursor: pointer; text-align: center; font-family: ${FONT};
       font-size: 12px; font-weight: 600; color: #ffb3b3; background: rgba(255,92,92,.12);
       border: 1px solid rgba(255,92,92,.35); border-radius: 7px; padding: 7px 0;
     }
     .end:hover { background: rgba(255,92,92,.22); }
     .end[disabled] { opacity: .55; cursor: default; }
-    .footer {
-      font-size: 11.5px; color: #6ea8fe; text-decoration: none;
-      padding-top: 8px;
-    }
-    .footer:hover { text-decoration: underline; }
     .pill {
       position: fixed; top: 12px; right: 12px; z-index: 2147483647; cursor: pointer;
       display: flex; align-items: center; gap: 7px; font-size: 12px;
@@ -140,9 +142,12 @@
         <div class="hint" id="hintText"></div>
         <div class="activity" id="activity"></div>
         <div class="controls">
+          <div class="row2">
+            <button class="btn" id="muteBtn" title="Mute or unmute your microphone">Mute mic</button>
+            <button class="btn" id="audioBtn" title="Bring the live audio panel (device pickers, levels) to the front">Audio panel</button>
+          </div>
           <button class="end" id="endBtn" title="End the demo and write the lead report">End demo</button>
         </div>
-        <a class="footer" id="audioLink" href="${CLIENT_URL}" target="_blank" rel="noopener noreferrer">Audio settings ↗</a>
       </div>
       <div class="pill" id="pill" hidden title="Expand">
         <span class="dot" id="pillDot"></span>
@@ -158,6 +163,7 @@
       phaseEls: [root.getElementById("phaseText"), root.getElementById("pillPhase")],
       hintEl: root.getElementById("hintText"),
       activityEl: root.getElementById("activity"),
+      muteBtnEl: root.getElementById("muteBtn"),
     };
     root.getElementById("collapseBtn").addEventListener("click", () => {
       state.collapsed = true;
@@ -166,6 +172,17 @@
     ui.pillEl.addEventListener("click", () => {
       state.collapsed = false;
       renderCollapsed();
+    });
+    // Both proxy to Python via the polled command channel — the live session
+    // (mic tracks, audio devices) exists in the voice-client tab, not here.
+    // The mute label is set authoritatively by Python via micState() after the
+    // real tracks flip, so it can never drift from reality.
+    root.getElementById("muteBtn").addEventListener("click", (e) => {
+      window.__demoPanelCmd = "mute-toggle";
+      e.target.textContent = "…";
+    });
+    root.getElementById("audioBtn").addEventListener("click", () => {
+      window.__demoPanelCmd = "front-client";
     });
     root.getElementById("endBtn").addEventListener("click", (e) => {
       // Picked up by the Python-side watcher (controller.poll_panel_command)
@@ -208,6 +225,13 @@
       run(() => {
         state.collapsed = !!flag;
         renderCollapsed();
+      });
+    },
+    micState(text) {
+      run(() => {
+        const muted = text === "muted";
+        ui.muteBtnEl.classList.toggle("muted", muted);
+        ui.muteBtnEl.textContent = muted ? "Unmute mic" : "Mute mic";
       });
     },
   };
