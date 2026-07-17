@@ -228,7 +228,9 @@ class BrowserController:
         self._pw = await async_playwright().start()
         self._browser = await self._pw.chromium.launch(headless=self.headless, timeout=_TIMEOUT_MS)
         state = self.storage_state if self.storage_state and Path(self.storage_state).exists() else None
-        self._context = await self._browser.new_context(storage_state=state)
+        # no_viewport: track the real window size — Playwright's fixed default
+        # viewport (1280x720) leaves dead white space when the user resizes.
+        self._context = await self._browser.new_context(storage_state=state, no_viewport=True)
         await self._context.add_init_script(CURSOR_JS)
         await self._context.add_init_script(PANEL_JS)
         self._page = await self._context.new_page()
@@ -305,6 +307,19 @@ class BrowserController:
             )
         except PlaywrightError:
             pass
+
+    async def poll_panel_command(self) -> str | None:
+        """Read-and-clear the sidebar's pending command (e.g. "end" from the
+        End-demo button — app.py polls this). Never raises."""
+        if self._page is None:
+            return None
+        try:
+            return await self._page.evaluate(
+                "() => { const c = window.__demoPanelCmd || null; "
+                "window.__demoPanelCmd = null; return c; }"
+            )
+        except PlaywrightError:
+            return None
 
     async def front_demo(self) -> None:
         """Bring the demo tab back to the foreground. The pipecat voice client
@@ -500,28 +515,38 @@ class BrowserController:
             origin = url.split("/client")[0]
             await self._context.grant_permissions(["microphone"], origin=origin)
             page = await self._context.new_page()
-            await page.goto(url, timeout=_TIMEOUT_MS, wait_until="domcontentloaded")
-            # Connect, then verify the session actually establishes (Disconnect
-            # button appears). First macOS run can stall on the OS-level mic
-            # dialog for Chromium — retry once, then tell the user what's up.
-            for attempt in (1, 2):
+            await page.goto(url, timeout=_TIMEOUT_MS, wait_until="load")
+            # exact=True everywhere: get_by_role's default substring matching
+            # would make "Connect" also match "Disconnect".
+            connect = page.get_by_role("button", name="Connect", exact=True)
+            disconnect = page.get_by_role("button", name="Disconnect", exact=True)
+            # Let the client app actually wire its handlers before clicking.
+            await connect.first.wait_for(state="visible", timeout=15000)
+            await asyncio.sleep(0.5)
+            await connect.first.click(timeout=8000)
+            # First connection pays the whole cold start (VAD model load,
+            # provider websockets, ICE) — observed ~40s. Poll for the connected
+            # state and only re-click if the button actually returned to idle
+            # (a blind retry mid-negotiation can spawn a second session).
+            hinted = False
+            deadline = time.monotonic() + 45.0
+            while time.monotonic() < deadline:
                 try:
-                    await page.get_by_role("button", name="Connect").click(timeout=10000)
+                    if await disconnect.count() and await disconnect.first.is_visible():
+                        print("demo-agent: voice client connected — say hello.", flush=True)
+                        return True
+                    if await connect.count() and await connect.first.is_visible():
+                        await connect.first.click(timeout=4000)
                 except PlaywrightError:
-                    pass  # already connecting (button gone) — fall through to verify
-                try:
-                    await page.get_by_role("button", name="Disconnect").wait_for(
-                        state="visible", timeout=12000
+                    pass
+                if not hinted and time.monotonic() > deadline - 33.0:
+                    print(
+                        "demo-agent: still connecting (cold start can take ~30s) — if "
+                        "macOS is asking to allow the microphone for Chromium, click Allow.",
+                        flush=True,
                     )
-                    print("demo-agent: voice client connected — say hello.", flush=True)
-                    return True
-                except PlaywrightError:
-                    if attempt == 1:
-                        print(
-                            "demo-agent: voice client not connected yet — if macOS is "
-                            "asking to allow the microphone for Chromium, click Allow.",
-                            flush=True,
-                        )
+                    hinted = True
+                await asyncio.sleep(1.0)
             print(
                 f"demo-agent: could not auto-connect the voice client — open {url} "
                 "and click Connect (check the macOS microphone permission for Chromium).",

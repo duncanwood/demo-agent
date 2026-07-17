@@ -18,9 +18,14 @@
 // installing synchronously, before any caller could reach these).
 (function () {
   if (window.__demoPanel) return;
+  // Never render on our own localhost pages (the pipecat client tab, the
+  // setup page) — the panel belongs on the demo page only. Init scripts are
+  // context-wide, so this is the per-page opt-out.
+  if (location.origin === "http://localhost:7860") return;
 
   const MAX_ACTS = 6;
   const CLIENT_URL = "http://localhost:7860/client/";
+  const PANEL_WIDTH = 280;
   const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
   const CSS = `
     :host { all: initial; }
@@ -54,9 +59,17 @@
       color: #a9adb8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .act:first-child { color: #d7dae0; }
+    .controls { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); }
+    .end {
+      all: unset; cursor: pointer; flex: 1; text-align: center; font-family: ${FONT};
+      font-size: 12px; font-weight: 600; color: #ffb3b3; background: rgba(255,92,92,.12);
+      border: 1px solid rgba(255,92,92,.35); border-radius: 7px; padding: 7px 0;
+    }
+    .end:hover { background: rgba(255,92,92,.22); }
+    .end[disabled] { opacity: .55; cursor: default; }
     .footer {
       font-size: 11.5px; color: #6ea8fe; text-decoration: none;
-      padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08);
+      padding-top: 8px;
     }
     .footer:hover { text-decoration: underline; }
     .pill {
@@ -92,6 +105,24 @@
   function renderCollapsed() {
     ui.sidebarEl.hidden = state.collapsed;
     ui.pillEl.hidden = !state.collapsed;
+    reserveLane(!state.collapsed);
+  }
+
+  let savedHtmlMargin = null;
+  function reserveLane(on) {
+    // The page renders full width in its own lane; the sidebar is ADDITIVE,
+    // not an overlay: reserve its width on <html> while expanded. (Apps that
+    // hard-position elements with 100vw/right:0 may still reach under — a
+    // known limit of injecting into an arbitrary page.)
+    const html = document.documentElement;
+    if (on) {
+      if (savedHtmlMargin === null) savedHtmlMargin = html.style.marginRight || "";
+      html.style.setProperty("margin-right", PANEL_WIDTH + "px", "important");
+    } else if (savedHtmlMargin !== null) {
+      if (savedHtmlMargin) html.style.marginRight = savedHtmlMargin;
+      else html.style.removeProperty("margin-right");
+      savedHtmlMargin = null;
+    }
   }
 
   function install() {
@@ -108,6 +139,9 @@
         <div class="status"><span class="dot" id="dot"></span><span class="phase" id="phaseText"></span></div>
         <div class="hint" id="hintText"></div>
         <div class="activity" id="activity"></div>
+        <div class="controls">
+          <button class="end" id="endBtn" title="End the demo and write the lead report">End demo</button>
+        </div>
         <a class="footer" id="audioLink" href="${CLIENT_URL}" target="_blank" rel="noopener noreferrer">Audio settings ↗</a>
       </div>
       <div class="pill" id="pill" hidden title="Expand">
@@ -132,6 +166,14 @@
     ui.pillEl.addEventListener("click", () => {
       state.collapsed = false;
       renderCollapsed();
+    });
+    root.getElementById("endBtn").addEventListener("click", (e) => {
+      // Picked up by the Python-side watcher (controller.poll_panel_command)
+      // — same graceful path as Ctrl-C: report written, everything closes.
+      window.__demoPanelCmd = "end";
+      e.target.disabled = true;
+      e.target.textContent = "Ending…";
+      window.__demoPanel.phase("Ending — writing your report…", "working");
     });
 
     renderPhase();

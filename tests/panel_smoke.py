@@ -74,9 +74,20 @@ async def main() -> None:
     assert sidebar_hidden is False, "expected sidebar visible again after collapse(false)"
     print("OK: collapse(true)/collapse(false) toggle sidebar <-> pill")
 
-    # 5. the host must not intercept clicks outside the panel -------------------
-    viewport = controller._page.viewport_size or {"width": 1280, "height": 720}
-    cx, cy = viewport["width"] // 2, viewport["height"] // 2
+    # 4b. lane reservation: expanded sidebar reserves html margin; pill frees it -
+    margin = await controller._page.evaluate("() => document.documentElement.style.marginRight")
+    assert margin == "280px", f"expected reserved 280px lane while expanded, got {margin!r}"
+    await controller._page.evaluate("() => window.__demoPanel.collapse(true)")
+    margin = await controller._page.evaluate("() => document.documentElement.style.marginRight")
+    assert margin in ("", None), f"expected no reserved lane while collapsed, got {margin!r}"
+    await controller._page.evaluate("() => window.__demoPanel.collapse(false)")
+    print("OK: sidebar reserves its 280px lane on <html>; pill releases it")
+
+    # 5. the host must not intercept clicks in the page's content lane ----------
+    # (no_viewport=True -> viewport_size is None; measure the real window, and
+    # test the center of the CONTENT area left of the reserved 280px lane.)
+    size = await controller._page.evaluate("() => [window.innerWidth, window.innerHeight]")
+    cx, cy = (size[0] - 280) // 2, size[1] // 2
     center_is_host = await controller._page.evaluate(
         "([x, y]) => { const el = document.elementFromPoint(x, y); "
         "return !!el && el.id === '__demo-panel-host'; }",
@@ -84,6 +95,15 @@ async def main() -> None:
     )
     assert center_is_host is False, "panel host must not cover the viewport center"
     print("OK: panel host does not cover the page center (elementFromPoint check)")
+
+    # 6. End-demo button -> command channel -------------------------------------
+    await controller._page.evaluate(
+        f"() => {_HOST_SEL}.shadowRoot.getElementById('endBtn').click()"
+    )
+    cmd = await controller.poll_panel_command()
+    assert cmd == "end", f"expected 'end', got {cmd!r}"
+    assert await controller.poll_panel_command() is None, "command must clear after read"
+    print("OK: End-demo button -> poll_panel_command() returns 'end' exactly once")
 
     await controller.stop()
     print("\nPANEL SMOKE OK")

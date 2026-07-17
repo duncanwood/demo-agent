@@ -183,6 +183,15 @@ async def bot(runner_args: SmallWebRTCRunnerArguments) -> None:
     await runner.run()
 
 
+def request_shutdown() -> None:
+    """Ask the running dev server to exit gracefully — the same path as one
+    Ctrl-C (serve() returns, callers' finally writes the lead report). Used by
+    the demo page's End-demo button via app.py's command watcher."""
+    server = _session.get("server")
+    if server is not None:
+        server.should_exit = True
+
+
 def _dev_runner_args(*, host: str = "localhost", port: int = 7860) -> argparse.Namespace:
     """The defaults `pipecat.runner.run.main()`'s argparse would produce for an
     empty argv (multi-transport enabled — this demo only drives the webrtc
@@ -251,6 +260,7 @@ async def run_voice_agent(*, register_tools=None, system_prompt: str = "") -> No
     # signal force-exits.
     import signal
 
+    _session["server"] = server  # for request_shutdown() (on-page End button)
     serve_task = asyncio.create_task(server.serve())
     while not server.started and not serve_task.done():
         await asyncio.sleep(0.05)

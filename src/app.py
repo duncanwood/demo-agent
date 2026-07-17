@@ -127,6 +127,9 @@ async def _connect_client_when_up(controller, url: str) -> None:
         return
     if await _when_up(url):
         await controller.panel("phase", "Connecting audio", "working")
+        await controller.panel(
+            "hint", "First connection can take ~30 seconds while models warm up."
+        )
         if await controller.open_client_tab(url):
             await controller.front_demo()
             await controller.panel("phase", "Live — say hello", "live")
@@ -138,6 +141,19 @@ async def _connect_client_when_up(controller, url: str) -> None:
         else:
             await controller.panel("phase", "Audio not connected", "error")
             await controller.panel("hint", f"Open {url} and click Connect.")
+
+
+async def _panel_command_watcher(controller) -> None:
+    """Poll the demo page for sidebar commands. 'end' triggers the same
+    graceful shutdown as Ctrl-C — the report writes, everything closes."""
+    from src.voice.pipeline import request_shutdown
+
+    while True:
+        if await controller.poll_panel_command() == "end":
+            print("demo-agent: end requested from the demo page — shutting down.", flush=True)
+            request_shutdown()
+            return
+        await asyncio.sleep(1.2)
 
 
 async def _ensure_logged_in(controller, settings) -> None:
@@ -279,11 +295,13 @@ async def main() -> None:
         client_opener = asyncio.create_task(
             _connect_client_when_up(controller, f"{_BASE_URL}/client/")
         )
+        command_watcher = asyncio.create_task(_panel_command_watcher(controller))
         await controller.panel("phase", "Starting voice server", "working")
         try:
             await run_voice_agent(register_tools=_register, system_prompt=system_prompt)
         finally:
             client_opener.cancel()
+            command_watcher.cancel()
     finally:
         # The lead report FIRST — it needs only the captured context, and a
         # terminal Ctrl-C delivers SIGINT to the whole process group, so the
