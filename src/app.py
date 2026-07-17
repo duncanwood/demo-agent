@@ -88,6 +88,37 @@ def _extract_transcript(context) -> list[dict]:
     return turns
 
 
+def _open_report(controller, html_path) -> None:
+    """Open the post-call page in the SAME Chromium the session ran in — as a
+    detached, chromeless app window that outlives this process (the session
+    browser itself dies with Playwright). Falls back to the default browser."""
+    import subprocess
+    from pathlib import Path
+
+    url = html_path.resolve().as_uri()
+    exe = getattr(controller, "chromium_path", None)
+    if exe:
+        try:
+            subprocess.Popen(
+                [
+                    exe,
+                    f"--app={url}",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    f"--user-data-dir={Path('out/.report-profile').resolve()}",
+                ],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+        except OSError:
+            pass
+    import webbrowser
+
+    webbrowser.open(url)
+
+
 async def _when_up(url: str, *, timeout_s: float = 60.0) -> bool:
     """Poll `url` until it answers 200. Returns False on timeout."""
     import httpx
@@ -367,8 +398,7 @@ async def main() -> None:
                 html_path = render(_Path(path))
                 print(f"demo-agent: post-call page -> {html_path}", flush=True)
                 if os.getenv("AUTO_OPEN", "1") != "0":
-                    import webbrowser
-                    webbrowser.open(html_path.resolve().as_uri())
+                    _open_report(controller, html_path)
             except Exception as e:  # a failed report must not mask the real exit reason
                 print(f"demo-agent: enrichment failed ({e})", flush=True)
         try:
