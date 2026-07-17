@@ -15,7 +15,9 @@ Chromium driven through the DOM.
 Prerequisites: `make` and `curl` — nothing else. Setup provisions its own
 pinned Python 3.12 via [uv](https://docs.astral.sh/uv/) (installing uv first if
 missing), so the install is identical on every machine regardless of system
-Python. (~2 GB disk for the venv + Chromium.)
+Python. Disk: ~1.1 GB total (~750 MB venv — mostly pipecat's media stack — plus
+one ~330 MB Chromium build); the heavier local-model extras are opt-in via
+`make local-setup` and never part of the default install.
 
 ```bash
 make setup          # venv + deps + Chromium + scaffolds .env
