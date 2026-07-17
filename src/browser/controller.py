@@ -314,6 +314,66 @@ class BrowserController:
         except PlaywrightError:
             pass
 
+    async def _open_background_page(self, url: str) -> Page:
+        """Open `url` in a tab that does NOT steal focus (CDP Target.createTarget
+        with background=true); falls back to a normal tab + immediately
+        refronting the demo page. Returns the page once loaded."""
+        try:
+            cdp = await self._context.new_cdp_session(self._require_page())
+            before = set(self._context.pages)
+            await cdp.send("Target.createTarget", {"url": url, "background": True})
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                new = [p for p in self._context.pages if p not in before]
+                if new:
+                    await new[0].wait_for_load_state("load", timeout=_TIMEOUT_MS)
+                    return new[0]
+                await asyncio.sleep(0.1)
+        except PlaywrightError:
+            pass
+        page = await self._context.new_page()
+        await page.goto(url, timeout=_TIMEOUT_MS, wait_until="load")
+        try:
+            await self._require_page().bring_to_front()  # give focus straight back
+        except (PlaywrightError, ControllerError):
+            pass
+        return page
+
+    async def list_mics(self) -> list[dict]:
+        """Input devices visible to the live client tab: [{id, label}]. Never raises."""
+        if self._client_page is None:
+            return []
+        try:
+            return await self._client_page.evaluate(
+                "() => window.__listMics ? window.__listMics() : []"
+            ) or []
+        except PlaywrightError:
+            return []
+
+    async def set_mic_device(self, device_id: str) -> int:
+        """Switch the live outgoing audio to another input device (replaceTrack
+        on the live senders). Returns senders switched; 0 = failed. Never raises."""
+        if self._client_page is None:
+            return 0
+        try:
+            return await self._client_page.evaluate(
+                "(id) => window.__setMicDevice ? window.__setMicDevice(id) : 0", device_id
+            )
+        except PlaywrightError:
+            return 0
+
+    async def set_bot_volume(self, volume: float) -> int:
+        """Set bot playback volume (0..1) on the client tab's media elements.
+        Returns elements touched; 0 = nothing to control. Never raises."""
+        if self._client_page is None:
+            return 0
+        try:
+            return await self._client_page.evaluate(
+                "(v) => window.__setBotVolume ? window.__setBotVolume(v) : 0", volume
+            )
+        except PlaywrightError:
+            return 0
+
     async def set_mic_enabled(self, on: bool) -> int:
         """Mute/unmute the live session's microphone by flipping track.enabled
         in the voice-client tab (via client_shim.js). Returns the number of
@@ -339,18 +399,18 @@ class BrowserController:
         except PlaywrightError:
             return False
 
-    async def poll_panel_command(self) -> str | None:
-        """Read-and-clear the sidebar's pending command (e.g. "end" from the
-        End-demo button — app.py polls this). Never raises."""
+    async def poll_panel_commands(self) -> list[str]:
+        """Drain the sidebar's queued commands (End demo, mute, mic switch,
+        volume, front-client — app.py polls this). Never raises."""
         if self._page is None:
-            return None
+            return []
         try:
             return await self._page.evaluate(
-                "() => { const c = window.__demoPanelCmd || null; "
-                "window.__demoPanelCmd = null; return c; }"
-            )
+                "() => { const q = window.__demoPanelCmds || []; "
+                "window.__demoPanelCmds = []; return q; }"
+            ) or []
         except PlaywrightError:
-            return None
+            return []
 
     async def front_demo(self) -> None:
         """Bring the demo tab back to the foreground. The pipecat voice client
@@ -545,9 +605,11 @@ class BrowserController:
         try:
             origin = url.split("/client")[0]
             await self._context.grant_permissions(["microphone"], origin=origin)
-            page = await self._context.new_page()
+            # Background target: the client tab hosts the WebRTC session but the
+            # user should never SEE it unless they ask (Audio panel button) —
+            # the demo page keeps focus for the entire connect sequence.
+            page = await self._open_background_page(url)
             self._client_page = page  # sidebar audio controls proxy to this tab
-            await page.goto(url, timeout=_TIMEOUT_MS, wait_until="load")
             # exact=True everywhere: get_by_role's default substring matching
             # would make "Connect" also match "Disconnect".
             connect = page.get_by_role("button", name="Connect", exact=True)

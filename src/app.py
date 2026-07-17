@@ -138,6 +138,10 @@ async def _connect_client_when_up(controller, url: str) -> None:
                 else "demo-agent: warning — no local mic stream detected (sidebar mute won't work)",
                 flush=True,
             )
+            mics = await controller.list_mics()
+            if mics:
+                import json
+                await controller.panel("micDevices", json.dumps(mics))
             await controller.panel("phase", "Live — say hello", "live")
             await controller.panel(
                 "hint",
@@ -149,31 +153,53 @@ async def _connect_client_when_up(controller, url: str) -> None:
             await controller.panel("hint", f"Open {url} and click Connect.")
 
 
-async def _panel_command_watcher(controller) -> None:
-    """Poll the demo page for sidebar commands: 'end' triggers the same
-    graceful shutdown as Ctrl-C; 'mute-toggle' flips the live mic tracks in
-    the client tab; 'front-client' brings the live audio panel forward."""
+async def _panel_command_watcher(controller, session_contexts: list) -> None:
+    """The sidebar's server half: drains queued commands (end / mute / mic
+    switch / volume / front-client) and streams new conversation turns into
+    the sidebar transcript."""
     from src.voice.pipeline import request_shutdown
 
     mic_on = True
+    turns_pushed = 0
     while True:
-        cmd = await controller.poll_panel_command()
-        if cmd == "end":
-            print("demo-agent: end requested from the demo page — shutting down.", flush=True)
-            request_shutdown()
-            return
-        if cmd == "mute-toggle":
-            mic_on = not mic_on
-            tracks = await controller.set_mic_enabled(mic_on)
-            if not tracks:
-                mic_on = True  # nothing switched — stay in the live state
-                await controller.panel("act", "Mute failed — no live mic stream")
-            else:
-                await controller.panel("act", "Mic unmuted" if mic_on else "Mic muted")
-            await controller.panel("micState", "live" if mic_on else "muted")
-        elif cmd == "front-client":
-            if not await controller.front_client():
-                await controller.panel("act", "Audio panel tab is gone")
+        for cmd in await controller.poll_panel_commands():
+            if cmd == "end":
+                print("demo-agent: end requested from the demo page — shutting down.",
+                      flush=True)
+                request_shutdown()
+                return
+            if cmd == "mute-toggle":
+                mic_on = not mic_on
+                tracks = await controller.set_mic_enabled(mic_on)
+                if not tracks:
+                    mic_on = True  # nothing switched — stay in the live state
+                    await controller.panel("act", "Mute failed — no live mic stream")
+                else:
+                    await controller.panel("act", "Mic unmuted" if mic_on else "Mic muted")
+                await controller.panel("micState", "live" if mic_on else "muted")
+            elif cmd == "front-client":
+                if not await controller.front_client():
+                    await controller.panel("act", "Audio panel tab is gone")
+            elif cmd.startswith("mic:"):
+                switched = await controller.set_mic_device(cmd[4:])
+                await controller.panel(
+                    "act", "Mic switched" if switched else "Mic switch failed"
+                )
+            elif cmd.startswith("volume:"):
+                try:
+                    touched = await controller.set_bot_volume(float(cmd[7:]))
+                except ValueError:
+                    touched = 0
+                if not touched:
+                    await controller.panel("act", "Volume: nothing playing yet")
+
+        # Stream new finalized turns into the sidebar transcript.
+        if session_contexts:
+            turns = _extract_transcript(session_contexts[-1])
+            for turn in turns[turns_pushed:]:
+                await controller.panel("turn", turn["content"][:200], turn["role"])
+            turns_pushed = len(turns)
+
         await asyncio.sleep(1.2)
 
 
@@ -316,7 +342,9 @@ async def main() -> None:
         client_opener = asyncio.create_task(
             _connect_client_when_up(controller, f"{_BASE_URL}/client/")
         )
-        command_watcher = asyncio.create_task(_panel_command_watcher(controller))
+        command_watcher = asyncio.create_task(
+            _panel_command_watcher(controller, session_contexts)
+        )
         await controller.panel("phase", "Starting voice server", "working")
         try:
             await run_voice_agent(register_tools=_register, system_prompt=system_prompt)

@@ -96,14 +96,30 @@ async def main() -> None:
     assert center_is_host is False, "panel host must not cover the viewport center"
     print("OK: panel host does not cover the page center (elementFromPoint check)")
 
-    # 6. End-demo button -> command channel -------------------------------------
+    # 6. control buttons -> command queue (drained in order, exactly once) ------
     await controller._page.evaluate(
-        f"() => {_HOST_SEL}.shadowRoot.getElementById('endBtn').click()"
+        f"() => {{ {_HOST_SEL}.shadowRoot.getElementById('muteBtn').click(); "
+        f"{_HOST_SEL}.shadowRoot.getElementById('endBtn').click(); }}"
     )
-    cmd = await controller.poll_panel_command()
-    assert cmd == "end", f"expected 'end', got {cmd!r}"
-    assert await controller.poll_panel_command() is None, "command must clear after read"
-    print("OK: End-demo button -> poll_panel_command() returns 'end' exactly once")
+    cmds = await controller.poll_panel_commands()
+    assert cmds == ["mute-toggle", "end"], f"expected queued commands, got {cmds!r}"
+    assert await controller.poll_panel_commands() == [], "queue must clear after drain"
+    print("OK: sidebar buttons -> poll_panel_commands() drains ['mute-toggle', 'end'] once")
+
+    # 7. transcript + mic-device APIs render ------------------------------------
+    await controller.panel("turn", "hi there, what does this app do?", "user")
+    await controller.panel("turn", "This is the dashboard.", "assistant")
+    t_count = await controller._page.evaluate(
+        f"() => {_HOST_SEL}.shadowRoot.getElementById('transcript').children.length"
+    )
+    assert t_count == 2, f"expected 2 transcript rows, got {t_count}"
+    await controller.panel("micDevices", '[{"id":"a","label":"Mic A"},{"id":"b","label":"Mic B"}]')
+    opts = await controller._page.evaluate(
+        f"() => Array.from({_HOST_SEL}.shadowRoot.getElementById('micSel').options)"
+        ".map(o => o.textContent)"
+    )
+    assert opts == ["Mic A", "Mic B"], opts
+    print("OK: transcript rows render; mic-device list populates the picker")
 
     await controller.stop()
     print("\nPANEL SMOKE OK")

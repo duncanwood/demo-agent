@@ -29,11 +29,12 @@ Then everything opens itself and tells you where it is: the Chromium window
 starts on a **splash checklist** (opening the app → signing in → reading the
 product → voice server → connecting audio), the voice client connects in a
 background tab with the mic pre-granted, and you land on the demo page with the
-agent greeting you. A **status sidebar** on the page shows what the agent is
-doing ("Clicking 'Dashboard'…"), when it's live, and what to do, with the
-session controls built in: **Mute mic**, **Audio panel** (fronts the live
-client tab for device pickers and levels — the same session, not a new one),
-and **End demo**. Interrupt the agent any time — it stops and listens.
+agent greeting you — the voice client lives in a **background tab you never
+see**. The **status sidebar** on the demo page is the whole cockpit: live
+phase, what the agent is doing ("Clicking 'Dashboard'…"), a **running
+transcript**, **mic picker**, **bot volume**, **Mute mic**, and **End demo**;
+the **Audio panel** button fronts the live client tab (same session) for
+anything deeper. Interrupt the agent any time — it stops and listens.
 
 **Logging into the target app** happens on a ladder, whichever rung works first:
 a saved session from a previous run (`.auth-state.json`) → credentials from
