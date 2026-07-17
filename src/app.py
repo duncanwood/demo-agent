@@ -100,38 +100,7 @@ async def _chromium_path() -> str | None:
         return None
 
 
-def _open_chromium_window(exe: str | None, url: str) -> None:
-    """Open `url` as a detached, chromeless Chromium app window that outlives
-    this process — every user-facing page opens in the product's own browser,
-    never the system default. Falls back to the default browser."""
-    import subprocess
-    from pathlib import Path
-
-    if exe:
-        try:
-            os.makedirs("out", exist_ok=True)
-            subprocess.Popen(
-                [
-                    exe,
-                    f"--app={url}",
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    # Suppresses the "Chrome for Testing is only for automated
-                    # testing" infobar (Playwright passes equivalent switches
-                    # for the windows it launches itself).
-                    "--test-type",
-                    f"--user-data-dir={Path('out/.app-profile').resolve()}",
-                ],
-                start_new_session=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return
-        except OSError:
-            pass
-    import webbrowser
-
-    webbrowser.open(url)
+from src.chromium_window import open_chromium_window as _open_chromium_window  # noqa: E402
 
 
 async def _when_up(url: str, *, timeout_s: float = 60.0) -> bool:
