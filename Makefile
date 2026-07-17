@@ -1,20 +1,24 @@
-# demo-agent — Python 3.11+ required (set PYTHON to a 3.11+ interpreter if `python3` is older)
-PYTHON ?= python3
+# demo-agent — reproducible installs via uv: the SAME pinned CPython (3.12) is
+# provisioned on every machine, regardless of what the system has. If uv itself
+# is missing, `make setup` installs it (announced, to ~/.local/bin).
+PYTHON_VERSION := 3.12
+UV := $(shell command -v uv 2>/dev/null || echo $(HOME)/.local/bin/uv)
 PY = .venv/bin/python
-PIP = .venv/bin/pip
 
 .PHONY: setup local-setup run report reset-auth clean
-setup:  ## create venv, install deps, install Chromium, scaffold .env
-	@$(PYTHON) -c 'import sys; sys.version_info >= (3, 11) or sys.exit("ERROR: Python 3.11+ required, found %d.%d — rerun as: make setup PYTHON=/path/to/python3.11+" % sys.version_info[:2])'
-	$(PYTHON) -m venv .venv
-	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
+
+setup:  ## provision pinned Python + venv + deps + Chromium, scaffold .env
+	@command -v uv >/dev/null 2>&1 || test -x $(UV) || { \
+	  echo "uv not found — installing it to ~/.local/bin (astral.sh installer)"; \
+	  curl -LsSf https://astral.sh/uv/install.sh | sh; }
+	$(UV) venv .venv --python $(PYTHON_VERSION)
+	$(UV) pip install --python $(PY) -r requirements.txt
 	$(PY) -m playwright install chromium
 	@test -f .env || cp .env.example .env
-	@echo "Setup complete. Edit .env (add keys, or set PROVIDER_MODE=local), then: make run"
+	@echo "Setup complete. Run: make run  (keys are collected on first run, or edit .env)"
 
 local-setup:  ## install local-model extras (Whisper + Kokoro); run Ollama separately
-	$(PIP) install -r requirements-local.txt
+	$(UV) pip install --python $(PY) -r requirements-local.txt
 	@echo "Local extras installed. Set PROVIDER_MODE=local in .env and start Ollama."
 
 run:  ## launch the demo agent

@@ -12,7 +12,10 @@ Chromium driven through the DOM.
 
 ## Quickstart
 
-Prerequisites: Python **3.11+**, `make`. (Uses ~2 GB disk for the venv + Chromium.)
+Prerequisites: `make` and `curl` — nothing else. Setup provisions its own
+pinned Python 3.12 via [uv](https://docs.astral.sh/uv/) (installing uv first if
+missing), so the install is identical on every machine regardless of system
+Python. (~2 GB disk for the venv + Chromium.)
 
 ```bash
 make setup          # venv + deps + Chromium + scaffolds .env
@@ -150,7 +153,9 @@ tests/                fixture page + smoke suites
 
 ## Troubleshooting
 
-- **`Python 3.11+ required`** — rerun as `make setup PYTHON=/path/to/python3.11+`.
+- **Setup can't find or fetch Python** — `make setup` uses uv, which downloads
+  a managed CPython 3.12; if your network blocks it, install uv or Python 3.12
+  yourself and rerun.
 - **Login page still showing** — the target app is self-serve signup; create an
   account, then either log in in the Chromium window (auto-detected) or put the
   credentials in `.env`.
