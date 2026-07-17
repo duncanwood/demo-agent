@@ -88,18 +88,6 @@ def _extract_transcript(context) -> list[dict]:
     return turns
 
 
-async def _chromium_path() -> str | None:
-    """Playwright's Chromium executable path, without launching a browser
-    (used before the controller exists, e.g. for the first-run setup window)."""
-    try:
-        from playwright.async_api import async_playwright
-
-        async with async_playwright() as p:
-            return str(p.chromium.executable_path)
-    except Exception:
-        return None
-
-
 from src.chromium_window import open_chromium_window as _open_chromium_window  # noqa: E402
 
 
@@ -124,9 +112,8 @@ async def _open_setup_window(url: str) -> None:
     serves (AUTO_OPEN=0 disables) — never the system default browser."""
     if os.getenv("AUTO_OPEN", "1") == "0":
         return
-    exe = await _chromium_path()
     if await _when_up(url):
-        _open_chromium_window(exe, url)
+        _open_chromium_window(url)
 
 
 async def _connect_client_when_up(controller, url: str) -> None:
@@ -382,10 +369,7 @@ async def main() -> None:
                 html_path = render(_Path(path))
                 print(f"demo-agent: post-call page -> {html_path}", flush=True)
                 if os.getenv("AUTO_OPEN", "1") != "0":
-                    _open_chromium_window(
-                        getattr(controller, "chromium_path", None),
-                        html_path.resolve().as_uri(),
-                    )
+                    _open_chromium_window(html_path.resolve().as_uri())
             except Exception as e:  # a failed report must not mask the real exit reason
                 print(f"demo-agent: enrichment failed ({e})", flush=True)
         try:

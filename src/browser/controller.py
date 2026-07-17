@@ -228,9 +228,6 @@ class BrowserController:
 
     async def start(self) -> None:
         self._pw = await async_playwright().start()
-        # For post-session use (the report opens in this same Chromium as a
-        # detached window — the session browser itself dies with Playwright).
-        self.chromium_path = str(self._pw.chromium.executable_path)
         self._browser = await self._pw.chromium.launch(headless=self.headless, timeout=_TIMEOUT_MS)
         state = self.storage_state if self.storage_state and Path(self.storage_state).exists() else None
         # no_viewport: track the real window size — Playwright's fixed default

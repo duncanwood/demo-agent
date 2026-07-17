@@ -115,9 +115,9 @@ def main(argv: list[str]) -> int:
     out = render(path)
     print(f"post-call report: {out}")
     if "--no-open" not in argv:
-        from src.chromium_window import chromium_path_sync, open_chromium_window
+        from src.chromium_window import open_chromium_window
 
-        open_chromium_window(chromium_path_sync(), out.resolve().as_uri())
+        open_chromium_window(out.resolve().as_uri())
     return 0
 
 
