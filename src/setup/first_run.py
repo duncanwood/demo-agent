@@ -293,7 +293,7 @@ def _render_setup_page(values: dict[str, str], errors: dict[str, str]) -> str:
 {login_fields}      </div>
       <div class="actions">
         <button type="submit" class="primary">Save keys and continue</button>
-        <button type="submit" formaction="/local-mode" class="secondary">Use local mode instead (no keys)</button>
+        <button type="submit" formaction="/local-mode" formnovalidate class="secondary">Use local mode instead (no keys)</button>
       </div>
     </form>
 """

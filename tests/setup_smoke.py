@@ -51,6 +51,10 @@ async def scenario_fresh_env_full_save() -> None:
             assert resp.status_code == 200, resp.status_code
             for name in CLOUD_KEY_FIELDS:
                 assert f'name="{name}"' in resp.text, name
+            # The key fields are `required`, and the local-mode button submits
+            # the SAME form — without formnovalidate the browser blocks it
+            # (HTML-level constraint, invisible to these HTTP-level tests).
+            assert "formnovalidate" in resp.text, "local-mode button must bypass validation"
             print("OK: GET / -> 200, all three field names present in form HTML")
 
             resp = await client.post(
