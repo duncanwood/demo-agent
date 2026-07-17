@@ -116,6 +116,10 @@ def _open_chromium_window(exe: str | None, url: str) -> None:
                     f"--app={url}",
                     "--no-first-run",
                     "--no-default-browser-check",
+                    # Suppresses the "Chrome for Testing is only for automated
+                    # testing" infobar (Playwright passes equivalent switches
+                    # for the windows it launches itself).
+                    "--test-type",
                     f"--user-data-dir={Path('out/.app-profile').resolve()}",
                 ],
                 start_new_session=True,
