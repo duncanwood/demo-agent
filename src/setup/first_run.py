@@ -302,18 +302,13 @@ def _render_setup_page(values: dict[str, str], errors: dict[str, str]) -> str:
 
 def _render_success_page(*, poll: bool) -> str:
     if poll:
+        # No redirect to /client/: the app auto-connects the voice client in
+        # its own controlled browser — a redirect here would spawn a SECOND
+        # client session. This window's job is done.
         body = """    <div class="badge">&#10003;</div>
     <h1>Setup complete</h1>
-    <p class="sub">Saved. Starting the demo agent — this page will redirect.</p>
-    <noscript><p class="sub">JavaScript is disabled — open <a href="/client/">the app</a> manually once it starts.</p></noscript>
-    <script>
-      (function poll() {
-        fetch('/client/', {cache: 'no-store'}).then(function (r) {
-          if (r.status === 200) { window.location.href = '/client/'; }
-          else { setTimeout(poll, 1500); }
-        }).catch(function () { setTimeout(poll, 1500); });
-      })();
-    </script>
+    <p class="sub">Keys saved. The demo is starting — its own window opens in a
+    moment. You can close this one.</p>
 """
     else:
         body = """    <div class="badge">&#10003;</div>

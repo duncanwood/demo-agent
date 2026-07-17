@@ -88,24 +88,35 @@ def _extract_transcript(context) -> list[dict]:
     return turns
 
 
-def _open_report(controller, html_path) -> None:
-    """Open the post-call page in the SAME Chromium the session ran in — as a
-    detached, chromeless app window that outlives this process (the session
-    browser itself dies with Playwright). Falls back to the default browser."""
+async def _chromium_path() -> str | None:
+    """Playwright's Chromium executable path, without launching a browser
+    (used before the controller exists, e.g. for the first-run setup window)."""
+    try:
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as p:
+            return str(p.chromium.executable_path)
+    except Exception:
+        return None
+
+
+def _open_chromium_window(exe: str | None, url: str) -> None:
+    """Open `url` as a detached, chromeless Chromium app window that outlives
+    this process — every user-facing page opens in the product's own browser,
+    never the system default. Falls back to the default browser."""
     import subprocess
     from pathlib import Path
 
-    url = html_path.resolve().as_uri()
-    exe = getattr(controller, "chromium_path", None)
     if exe:
         try:
+            os.makedirs("out", exist_ok=True)
             subprocess.Popen(
                 [
                     exe,
                     f"--app={url}",
                     "--no-first-run",
                     "--no-default-browser-check",
-                    f"--user-data-dir={Path('out/.report-profile').resolve()}",
+                    f"--user-data-dir={Path('out/.app-profile').resolve()}",
                 ],
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
@@ -135,14 +146,14 @@ async def _when_up(url: str, *, timeout_s: float = 60.0) -> bool:
     return False
 
 
-async def _open_browser_when_up(url: str) -> None:
-    """Open `url` in the default browser once it serves (AUTO_OPEN=0 disables)."""
+async def _open_setup_window(url: str) -> None:
+    """Open the first-run setup page in the product's own Chromium once it
+    serves (AUTO_OPEN=0 disables) — never the system default browser."""
     if os.getenv("AUTO_OPEN", "1") == "0":
         return
-    import webbrowser
-
+    exe = await _chromium_path()
     if await _when_up(url):
-        webbrowser.open(url)
+        _open_chromium_window(exe, url)
 
 
 async def _connect_client_when_up(controller, url: str) -> None:
@@ -317,7 +328,7 @@ async def main() -> None:
     if needs_setup():
         print(f"demo-agent: first-run setup — opening {_BASE_URL}/ (add your keys there).",
               flush=True)
-        opener = asyncio.create_task(_open_browser_when_up(f"{_BASE_URL}/"))
+        opener = asyncio.create_task(_open_setup_window(f"{_BASE_URL}/"))
         completed = await run_first_run_setup()
         opener.cancel()
         if not completed:
@@ -398,7 +409,10 @@ async def main() -> None:
                 html_path = render(_Path(path))
                 print(f"demo-agent: post-call page -> {html_path}", flush=True)
                 if os.getenv("AUTO_OPEN", "1") != "0":
-                    _open_report(controller, html_path)
+                    _open_chromium_window(
+                        getattr(controller, "chromium_path", None),
+                        html_path.resolve().as_uri(),
+                    )
             except Exception as e:  # a failed report must not mask the real exit reason
                 print(f"demo-agent: enrichment failed ({e})", flush=True)
         try:
