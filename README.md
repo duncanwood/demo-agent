@@ -57,6 +57,10 @@ transcript. `make report` reopens the newest one; every run also logs to
 
 ## Configuration (`.env`)
 
+`make settings` opens the same page as first-run setup in editor mode —
+change the target URL, context page, app login, or keys (blank keeps the
+current one); restart `make run` to apply. Or edit `.env` directly:
+
 | Variable | Required | Purpose |
 |---|---|---|
 | `DEEPGRAM_API_KEY` | cloud mode | Speech-to-text |

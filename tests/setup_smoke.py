@@ -148,10 +148,51 @@ async def scenario_validation_error_then_ok() -> None:
         print("OK: second POST (validator now ok) completes run_first_run_setup() -> True")
 
 
+async def scenario_settings_mode() -> None:
+    """Settings mode: keys optional (blank = keep current, never validated);
+    target URL editable; existing key lines untouched."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env_path = str(Path(tmp) / ".env")
+        Path(env_path).write_text(
+            "DEEPGRAM_API_KEY=dg-old\nOPENAI_API_KEY=oa-old\nCARTESIA_API_KEY=ca-old\n"
+            "DEMO_TARGET_URL=https://old.example.com/\n"
+        )
+        seen: dict = {}
+
+        def validator(keys):
+            seen["keys"] = dict(keys)
+            return {}
+
+        base = "http://localhost:7874"
+        task = asyncio.create_task(
+            run_first_run_setup(
+                host="localhost", port=7874, env_path=env_path, validate=validator, mode="settings"
+            )
+        )
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await _wait_ready(base, client)
+            resp = await client.get(base + "/")
+            assert "demo-agent settings" in resp.text
+            assert "(unchanged)" in resp.text, "key fields must show keep-current placeholder"
+            assert ' required' not in resp.text, "no field may be required in settings mode"
+            assert 'name="DEMO_TARGET_URL"' in resp.text
+            resp = await client.post(
+                base + "/save", data={"DEMO_TARGET_URL": "https://new.example.com/"}
+            )
+            assert resp.status_code == 200, resp.text
+        assert (await task) is True
+        assert seen["keys"] == {}, "blank keys must never reach the validator in settings mode"
+        content = Path(env_path).read_text()
+        assert "DEMO_TARGET_URL=https://new.example.com/" in content
+        assert "DEEPGRAM_API_KEY=dg-old" in content
+        print("OK: settings mode -> URL updated; blank keys untouched and unvalidated")
+
+
 async def main() -> None:
     await scenario_fresh_env_full_save()
     await scenario_preexisting_env_merge()
     await scenario_validation_error_then_ok()
+    await scenario_settings_mode()
     print("\nSETUP SMOKE OK")
 
 

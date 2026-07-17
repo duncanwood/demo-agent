@@ -5,7 +5,7 @@ PYTHON_VERSION := 3.12
 UV := $(shell command -v uv 2>/dev/null || echo $(HOME)/.local/bin/uv)
 PY = .venv/bin/python
 
-.PHONY: setup run report reset-auth clean
+.PHONY: setup run report settings reset-auth clean
 
 setup:  ## provision pinned Python + venv + deps + Chromium, scaffold .env
 	@command -v uv >/dev/null 2>&1 || test -x $(UV) || { \
@@ -22,6 +22,9 @@ run:  ## launch the demo agent
 
 report:  ## open the newest session's post-call report page
 	$(PY) -m src.enrichment.view
+
+settings:  ## open the settings page (target URL, keys, app login)
+	$(PY) -m src.setup.first_run
 
 reset-auth:  ## forget the saved app login (next run logs in fresh)
 	rm -f .auth-state.json

@@ -51,7 +51,8 @@ from src.config import missing_cloud_keys, reload_settings
 
 CLOUD_KEY_FIELDS: tuple[str, ...] = ("DEEPGRAM_API_KEY", "OPENAI_API_KEY", "CARTESIA_API_KEY")
 LOGIN_FIELDS: tuple[str, ...] = ("DEMO_LOGIN_EMAIL", "DEMO_LOGIN_PASSWORD")
-FORM_FIELDS: tuple[str, ...] = CLOUD_KEY_FIELDS + LOGIN_FIELDS
+TARGET_FIELDS: tuple[str, ...] = ("DEMO_TARGET_URL", "CONTEXT_URL")
+FORM_FIELDS: tuple[str, ...] = CLOUD_KEY_FIELDS + LOGIN_FIELDS + TARGET_FIELDS
 
 # display title + provider console link for each cloud key field, in form order
 _PROVIDER_INFO: dict[str, tuple[str, str]] = {
@@ -245,16 +246,17 @@ def _shell(body: str) -> str:
     return _PAGE_TEMPLATE.replace("__BODY__", body)
 
 
-def _key_field_html(var_name: str, value: str, error: str) -> str:
+def _key_field_html(var_name: str, value: str, error: str, *, required: bool) -> str:
     title, link = _PROVIDER_INFO[var_name]
     err_class = " field-error" if error else ""
+    req_attr = " required" if required else ' placeholder="(unchanged)"'
     return f"""      <div class="field">
         <div class="field-head">
           <span class="field-title">{escape(title)}</span>
           <code class="var-tag">{escape(var_name)}</code>
         </div>
         <input type="password" id="{var_name}" name="{var_name}" value="{escape(value, quote=True)}"
-               autocomplete="off" required class="{err_class.strip()}">
+               autocomplete="off"{req_attr} class="{err_class.strip()}">
         <div class="field-foot">
           <a href="{escape(link)}" target="_blank" rel="noopener">Get your key →</a>
           {f'<span class="err">{escape(error)}</span>' if error else ''}
@@ -275,37 +277,73 @@ def _login_field_html(var_name: str, label: str, input_type: str, value: str) ->
 """
 
 
-def _render_setup_page(values: dict[str, str], errors: dict[str, str]) -> str:
-    key_fields = "".join(_key_field_html(name, values.get(name, ""), errors.get(name, "")) for name in CLOUD_KEY_FIELDS)
+def _render_setup_page(values: dict[str, str], errors: dict[str, str], mode: str) -> str:
+    first_run = mode == "first-run"
+    key_fields = "".join(
+        _key_field_html(name, values.get(name, ""), errors.get(name, ""), required=first_run)
+        for name in CLOUD_KEY_FIELDS
+    )
     login_fields = (
         _login_field_html("DEMO_LOGIN_EMAIL", "App login email", "text", values.get("DEMO_LOGIN_EMAIL", ""))
         + _login_field_html("DEMO_LOGIN_PASSWORD", "App login password", "password", values.get("DEMO_LOGIN_PASSWORD", ""))
     )
-    body = f"""    <h1>demo-agent setup</h1>
-    <p class="sub">First-run setup: add your provider keys — they're written to .env
-      locally and never leave this machine.</p>
+    target_fields = (
+        _login_field_html("DEMO_TARGET_URL", "App to demo", "text", values.get("DEMO_TARGET_URL", ""))
+        + _login_field_html("CONTEXT_URL", "Context page (optional)", "text", values.get("CONTEXT_URL", ""))
+    )
+    if first_run:
+        heading, sub, button = (
+            "demo-agent setup",
+            "First-run setup: add your provider keys — they're written to .env locally "
+            "and never leave this machine.",
+            "Save keys and continue",
+        )
+        key_note = ""
+    else:
+        heading, sub, button = (
+            "demo-agent settings",
+            "Edit configuration — values are written to .env locally. Restart "
+            "<code>make run</code> to apply.",
+            "Save settings",
+        )
+        key_note = """      <p class="section-note">Keys: leave blank to keep the current ones.</p>
+"""
+    body = f"""    <h1>{heading}</h1>
+    <p class="sub">{sub}</p>
     <form method="post" action="/save">
-{key_fields}      <div class="divider">
+      <div class="divider">
+        <div class="section-label">Target</div>
+        <p class="section-note">The app the agent demos; the context page (a landing
+          or docs URL) shapes the product brief — defaults to the app itself.</p>
+{target_fields}      </div>
+{key_note}{key_fields}      <div class="divider">
         <div class="section-label">App login — optional</div>
         <p class="section-note">Optional; you can also just log in manually in the
           browser window when it opens.</p>
 {login_fields}      </div>
       <div class="actions">
-        <button type="submit" class="primary">Save keys and continue</button>
+        <button type="submit" class="primary">{button}</button>
       </div>
     </form>
 """
     return _shell(body)
 
 
-def _render_success_page() -> str:
+def _render_success_page(mode: str) -> str:
     # No redirect to /client/: the app auto-connects the voice client in its
     # own controlled browser — a redirect here would spawn a SECOND client
     # session. This window's job is done.
-    body = """    <div class="badge">&#10003;</div>
+    if mode == "first-run":
+        body = """    <div class="badge">&#10003;</div>
     <h1>Setup complete</h1>
     <p class="sub">Keys saved. The demo is starting — its own window opens in a
     moment. You can close this one.</p>
+"""
+    else:
+        body = """    <div class="badge">&#10003;</div>
+    <h1>Settings saved</h1>
+    <p class="sub">Saved to .env. Start (or restart) the demo with
+    <code>make run</code> to apply. You can close this window.</p>
 """
     return _shell(body)
 
@@ -316,6 +354,7 @@ async def run_first_run_setup(
     port: int = 7860,
     env_path: str = ".env",
     validate: ValidateFn | None = None,
+    mode: str = "first-run",
 ) -> bool:
     """Serve the first-run setup page until the user completes it.
 
@@ -335,35 +374,49 @@ async def run_first_run_setup(
     """
     validate_fn: ValidateFn = validate if validate is not None else _validate_keys_live
 
-    state: dict[str, Any] = {"values": {name: "" for name in FORM_FIELDS}, "errors": {}}
+    # Non-secret fields prefill from the current environment so the settings
+    # mode is an editor, not a blank slate; key fields never echo values.
+    initial = {name: "" for name in FORM_FIELDS}
+    for name in TARGET_FIELDS + ("DEMO_LOGIN_EMAIL",):
+        initial[name] = os.getenv(name, "").strip()
+    state: dict[str, Any] = {"values": initial, "errors": {}}
     outcome = {"done": False}
 
     app = FastAPI()
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> HTMLResponse:
-        return HTMLResponse(_render_setup_page(state["values"], state["errors"]))
+        return HTMLResponse(_render_setup_page(state["values"], state["errors"], mode))
 
     @app.post("/save", response_class=HTMLResponse)
     async def save(request: Request) -> HTMLResponse:
         form = await request.form()
         values = {name: str(form.get(name) or "").strip() for name in CLOUD_KEY_FIELDS}
-        values["DEMO_LOGIN_EMAIL"] = str(form.get("DEMO_LOGIN_EMAIL") or "").strip()
+        for name in TARGET_FIELDS + ("DEMO_LOGIN_EMAIL",):
+            values[name] = str(form.get(name) or "").strip()
         values["DEMO_LOGIN_PASSWORD"] = str(form.get("DEMO_LOGIN_PASSWORD") or "")
         state["values"] = values
 
-        raw = validate_fn({name: values[name] for name in CLOUD_KEY_FIELDS})
+        # Settings mode: blank key = keep the current one — validate only what
+        # was actually entered. First-run: all three are checked (blanks get
+        # the validator's "required" error).
+        keys_to_check = {
+            name: values[name]
+            for name in CLOUD_KEY_FIELDS
+            if mode == "first-run" or values[name]
+        }
+        raw = validate_fn(keys_to_check)
         errors = await raw if inspect.isawaitable(raw) else raw
         state["errors"] = errors
         if errors:
-            return HTMLResponse(_render_setup_page(values, errors))
+            return HTMLResponse(_render_setup_page(values, errors, mode))
 
         updates = {name: value for name, value in values.items() if value}
         _merge_env_file(env_path, updates)
         if env_path == ".env":
             reload_settings()
 
-        page = _render_success_page()
+        page = _render_success_page(mode)
         outcome["done"] = True
         server.should_exit = True
         return HTMLResponse(page)
@@ -385,3 +438,39 @@ async def run_first_run_setup(
 
     await serve_task
     return outcome["done"]
+
+
+def _main() -> int:
+    """`make settings` entrypoint: serve the editor on a side port (7861 — the
+    demo may be running on 7860) in the product's own Chromium window."""
+    from src.chromium_window import open_chromium_window
+
+    port = 7861
+    url = f"http://localhost:{port}/"
+
+    async def _go() -> bool:
+        async def _open_when_up() -> None:
+            async with httpx.AsyncClient() as client:
+                for _ in range(40):
+                    try:
+                        if (await client.get(url, timeout=1)).status_code == 200:
+                            open_chromium_window(url)
+                            return
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.25)
+
+        opener = asyncio.create_task(_open_when_up())
+        try:
+            return await run_first_run_setup(port=port, mode="settings")
+        finally:
+            opener.cancel()
+
+    saved = asyncio.run(_go())
+    print("settings saved — restart make run to apply." if saved
+          else "settings window closed without saving.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
