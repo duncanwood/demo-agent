@@ -92,6 +92,16 @@ async def main() -> None:
     assert "fixture2.html" in snap["url"], snap["url"]
     print("OK: navigate('fixture2.html') resolved + allowed ->", snap["url"])
 
+    # end_demo: schedules a deferred graceful shutdown (no server registered in
+    # tests -> request_shutdown is a no-op); shrink the grace so the task
+    # completes inside this event loop instead of leaking a pending-task warning.
+    import src.agent.tools as tools_mod
+    tools_mod.END_DEMO_GRACE_S = 0.05
+    result = await actions["end_demo"]({})
+    assert result.get("status") == "ending", result
+    await asyncio.sleep(0.2)
+    print("OK: end_demo -> {'status': 'ending'}, deferred shutdown task completed")
+
     await controller.stop()
     print("SMOKE (pure actions) OK")
 
@@ -100,7 +110,7 @@ async def main() -> None:
     context = LLMContext(messages=[{"role": "system", "content": "test"}])
     register_browser_tools(llm, context, BrowserController(headless=True))
 
-    expected = {"read_page", "click", "type_text", "select_option", "scroll", "navigate"}
+    expected = {"read_page", "click", "type_text", "select_option", "scroll", "navigate", "end_demo"}
     attached = {schema.name for schema in context.tools.standard_tools}
     assert attached == expected, attached
     for name in expected:

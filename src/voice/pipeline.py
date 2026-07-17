@@ -175,8 +175,9 @@ async def bot(runner_args: SmallWebRTCRunnerArguments) -> None:
                 "content": (
                     "(The visitor is quietly watching. Continue the demo on your "
                     "own: if you announced an action, perform it now with a tool "
-                    "call; otherwise show the next part of the tour, or wrap up "
-                    "if you have covered the key features.)"
+                    "call; otherwise show the next part of the tour. If you have "
+                    "covered the key features and they remain silent, wrap up — "
+                    "say goodbye and call end_demo in the same turn.)"
                 ),
             }
         )

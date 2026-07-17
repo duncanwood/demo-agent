@@ -29,6 +29,7 @@ section, which flagged these as the two unknowns to verify before wiring):
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Awaitable, Callable
 
 from urllib.parse import urljoin, urlsplit
@@ -42,6 +43,11 @@ from src.browser.controller import BrowserController, ControllerError
 from src.config import settings
 
 Action = Callable[[dict], Awaitable[dict]]
+
+# Grace period between the agent calling end_demo and the actual shutdown, so
+# the goodbye line's TTS finishes playing. Tests shrink this.
+END_DEMO_GRACE_S = 7.0
+_pending_tasks: set[asyncio.Task] = set()  # strong refs until done
 
 
 def _guard_navigation(url: str) -> str | None:
@@ -102,6 +108,23 @@ def build_actions(controller: BrowserController) -> dict[str, Action]:
             return {"error": "navigation outside the demo app is not allowed"}
         return await _run(controller.navigate(resolved))
 
+    async def end_demo(args: dict) -> dict:
+        # Shutdown is deferred so the goodbye that preceded this call finishes
+        # playing; then the exact same graceful path as Ctrl-C / the sidebar's
+        # End-demo button (lead report + post-call page).
+        from src.voice.pipeline import request_shutdown
+
+        await controller.panel("phase", "Demo complete — writing your report…", "working")
+
+        async def _later() -> None:
+            await asyncio.sleep(END_DEMO_GRACE_S)
+            request_shutdown()
+
+        task = asyncio.create_task(_later())
+        _pending_tasks.add(task)
+        task.add_done_callback(_pending_tasks.discard)
+        return {"status": "ending", "note": "session will close in a few seconds"}
+
     return {
         "read_page": read_page,
         "click": click,
@@ -109,6 +132,7 @@ def build_actions(controller: BrowserController) -> dict[str, Action]:
         "select_option": select_option,
         "scroll": scroll,
         "navigate": navigate,
+        "end_demo": end_demo,
     }
 
 
@@ -184,6 +208,14 @@ _TOOL_SPECS: list[tuple[str, str, dict[str, Any], list[str]]] = [
             }
         },
         ["url"],
+    ),
+    (
+        "end_demo",
+        "End the demo session. Call this ONLY after you have already said a brief "
+        "goodbye in the same turn — the session closes a few seconds later and the "
+        "lead report is written automatically.",
+        {},
+        [],
     ),
 ]
 

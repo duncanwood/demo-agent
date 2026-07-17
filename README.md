@@ -42,8 +42,10 @@ a saved session from a previous run (`.auth-state.json`) → credentials from
 saves the session for next time, and continues. `make reset-auth` forgets the
 saved session.
 
-**After the call:** the sidebar's **End demo** button (or Ctrl-C) ends the
-session gracefully, writes
+**After the call:** the demo ends three ways — **the agent closes it itself**
+at a natural endpoint (you say goodbye, it says goodbye back and hangs up),
+the sidebar's **End demo** button, or Ctrl-C. All three end gracefully and
+write
 `out/session-<timestamp>.json` (structured lead report + full transcript), and
 opens a **post-call report page** — lead status, prospect profile, pain points,
 the questions asked with answers given, a suggested next step, and the
