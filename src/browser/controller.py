@@ -19,6 +19,15 @@ ControllerError("stale ref — call read_page again").
   _ensure_cursor() re-injects it defensively if ever missing.
 - Every Playwright call carries an explicit timeout; "settle" never raises on timeout —
   a live voice demo must not hang.
+- panel.js (guided-UX status sidebar/pill) is installed the same way; _ensure_panel()
+  mirrors _ensure_cursor(). show_splash() replaces the page with a startup card before
+  any navigation — its own inline script defines a duck-typed window.__demoPanel (same
+  phase/hint/act/collapse API) since page.set_content() does not run context init
+  scripts (verified empirically); a real navigate() then installs panel.js's sidebar
+  fresh on the new document. panel(kind, text, state) is a guarded, never-raising
+  dispatch into window.__demoPanel[kind](text, state); click/type/select/navigate/
+  scroll each push one human-readable line to the activity feed via panel("act", ...)
+  before acting.
 """
 from __future__ import annotations
 
@@ -39,6 +48,7 @@ from playwright.async_api import (
 )
 
 CURSOR_JS = (Path(__file__).parent / "cursor.js").read_text()
+PANEL_JS = (Path(__file__).parent / "panel.js").read_text()
 
 _TIMEOUT_MS = 8000
 _SETTLE_TIMEOUT_MS = 4000
@@ -54,8 +64,15 @@ _SNAPSHOT_SELECTOR = (
 
 # Runs per-element inside the page: visibility check + {role, name} extraction.
 # name priority: aria-label > visible text > placeholder > value > title.
+# Playwright's selector engine pierces open shadow roots by default, so
+# query_selector_all(_SNAPSHOT_SELECTOR) would otherwise also match panel.js's own
+# Collapse button / Audio settings link — guided-UX chrome, not part of the target
+# app. Exclude anything rooted in our panel's shadow tree before the visibility
+# check so the LLM-facing snapshot never sees (or can click) our own overlay.
 _EXTRACT_JS = r"""
 (el) => {
+  const root = el.getRootNode();
+  if (root && root.host && root.host.id === '__demo-panel-host') return { visible: false };
   const rect = el.getBoundingClientRect(), cs = getComputedStyle(el);
   const visible = rect.width > 0 && rect.height > 0 &&
     cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
@@ -80,6 +97,112 @@ _EMAIL_SELECTORS = ["input[type=email]", 'input[name*="email" i]', "input[type=t
 _PASSWORD_SELECTOR = "input[type=password]"
 _SUBMIT_SELECTORS = ["button[type=submit]", "input[type=submit]", "form button", "button"]
 
+# Startup splash (show_splash()): a minimal centered card rendered via page.set_content()
+# before any navigation. Its inline <script> defines its OWN small window.__demoPanel
+# (phase/hint/act/collapse — same method names panel.js exposes) that drives a phase
+# checklist instead of the sidebar; set_content() does not run context init scripts
+# (verified empirically), so panel.js never installs on this document — no collision.
+# Phase strings are the EXACT strings app.py passes to controller.panel("phase", ...);
+# PHASE_TO_ROW maps the ones that occur before the real target navigation to a row here.
+# Unknown phase names (everything after navigation, once panel.js's sidebar has taken
+# over) simply update the status line on THAT document instead — this file is inert by
+# then. hint()/act()/collapse() are safe no-ops here; nothing in the real flow calls
+# hint() before navigation, but the same-API contract must hold regardless.
+_SPLASH_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><title>demo-agent</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    background: #0b0c0e; color: #e6e7ea;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .card {
+    width: 380px; padding: 28px 30px; border-radius: 14px;
+    background: #17181c; border: 1px solid rgba(255,255,255,.08);
+    box-shadow: 0 20px 60px rgba(0,0,0,.45);
+  }
+  .title { font-size: 15px; font-weight: 600; margin-bottom: 18px; }
+  .title .brand { color: #6ea8fe; }
+  .status { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #6b7280; }
+  .dot.working { background: #f0a93b; animation: pulse 1.6s ease-in-out infinite; }
+  .dot.live { background: #34c77b; }
+  .dot.error { background: #ff5c5c; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+  #statusLine { font-size: 13px; color: #c3c6cd; }
+  .rows { display: flex; flex-direction: column; gap: 9px; }
+  .row { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #6b7280; }
+  .row .mark { width: 14px; text-align: center; flex: none; font-size: 12px; }
+  .row.done { color: #9aa0ab; }
+  .row.done .mark { color: #34c77b; }
+  .row.active { color: #e6e7ea; }
+  .row.active .mark { color: #f0a93b; animation: pulse 1.6s ease-in-out infinite; }
+  #hintLine { font-size: 11.5px; color: #8b8d97; margin-top: 14px; }
+</style></head>
+<body>
+  <div class="card">
+    <div class="title"><span class="brand">demo-agent</span> — starting your live demo</div>
+    <div class="status"><span class="dot working" id="statusDot"></span><span id="statusLine">Starting…</span></div>
+    <div class="rows">
+      <div class="row done"><span class="mark">✓</span><span>Browser</span></div>
+      <div class="row" data-row="Opening the app"><span class="mark">•</span><span>Opening the app</span></div>
+      <div class="row" data-row="Signing in"><span class="mark">•</span><span>Signing in</span></div>
+      <div class="row" data-row="Reading the product"><span class="mark">•</span><span>Reading the product</span></div>
+      <div class="row" data-row="Voice server"><span class="mark">•</span><span>Voice server</span></div>
+      <div class="row" data-row="Connecting audio"><span class="mark">•</span><span>Connecting audio</span></div>
+    </div>
+    <div id="hintLine" hidden></div>
+  </div>
+<script>
+(function () {
+  var ROWS = ["Opening the app", "Signing in", "Reading the product", "Voice server", "Connecting audio"];
+  var PHASE_TO_ROW = {
+    "Opening the app": "Opening the app",
+    "Signing in": "Signing in",
+    "Reading the product": "Reading the product",
+    "Starting voice server": "Voice server",
+    "Connecting audio": "Connecting audio"
+  };
+  var rowEls = {};
+  ROWS.forEach(function (label) {
+    rowEls[label] = document.querySelector('[data-row="' + label + '"]');
+  });
+  var statusEl = document.getElementById("statusLine");
+  var dotEl = document.getElementById("statusDot");
+  var hintEl = document.getElementById("hintLine");
+
+  function setRow(label, cls) {
+    var el = rowEls[label];
+    if (!el) return;
+    el.classList.remove("done", "active");
+    if (cls) el.classList.add(cls);
+    var mark = el.querySelector(".mark");
+    if (mark) mark.textContent = cls === "done" ? "✓" : "•";
+  }
+
+  window.__demoPanel = {
+    phase: function (text, state) {
+      if (statusEl) statusEl.textContent = text || "";
+      if (dotEl) dotEl.className = "dot " + (state || "working");
+      var idx = ROWS.indexOf(PHASE_TO_ROW[text]);
+      if (idx === -1) return;
+      ROWS.forEach(function (label, i) {
+        setRow(label, i < idx ? "done" : i === idx ? "active" : "");
+      });
+    },
+    hint: function (text) {
+      if (!hintEl) return;
+      hintEl.textContent = text || "";
+      hintEl.hidden = !text;
+    },
+    act: function () {},
+    collapse: function () {}
+  };
+})();
+</script>
+</body></html>"""
+
 
 class ControllerError(Exception):
     """Raised for any browser-action failure; message is meant to be read (and acted on)
@@ -95,6 +218,7 @@ class BrowserController:
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._refs: dict[str, ElementHandle] = {}
+        self._ref_names: dict[str, str] = {}
         self._seen_refs: set[str] = set()
         self._generation = 0
 
@@ -106,8 +230,10 @@ class BrowserController:
         state = self.storage_state if self.storage_state and Path(self.storage_state).exists() else None
         self._context = await self._browser.new_context(storage_state=state)
         await self._context.add_init_script(CURSOR_JS)
+        await self._context.add_init_script(PANEL_JS)
         self._page = await self._context.new_page()
         await self._ensure_cursor()
+        await self._ensure_panel()
 
     async def stop(self) -> None:
         for closer in (
@@ -124,7 +250,7 @@ class BrowserController:
                 # browser may already be gone — teardown never raises.
                 pass
         self._pw = self._browser = self._context = self._page = None
-        self._refs, self._seen_refs = {}, set()
+        self._refs, self._ref_names, self._seen_refs = {}, {}, set()
 
     def _require_page(self) -> Page:
         if self._page is None:
@@ -139,6 +265,57 @@ class BrowserController:
                 await page.evaluate(CURSOR_JS)
         except PlaywrightError:
             pass  # cosmetic only — never block the demo on the cursor overlay
+
+    async def _ensure_panel(self) -> None:
+        page = self._require_page()
+        try:
+            has_panel = await page.evaluate("() => !!window.__demoPanel")
+            if not has_panel:
+                await page.evaluate(PANEL_JS)
+        except PlaywrightError:
+            pass  # cosmetic only — never block the demo on the status panel
+
+    async def show_splash(self) -> None:
+        """Render a minimal startup card before any navigation happens. Phase/hint
+        pushes against this document hit the small window.__demoPanel defined inline
+        in _SPLASH_HTML (NOT panel.js — page.set_content() does not run context init
+        scripts, verified empirically, so the two never collide); once navigate()
+        performs a real page load, panel.js's sidebar installs fresh on the new
+        document and subsequent panel() calls land there instead."""
+        page = self._require_page()
+        try:
+            await page.set_content(_SPLASH_HTML, timeout=_TIMEOUT_MS)
+        except PlaywrightError:
+            pass  # cosmetic only — a failed splash must never block startup
+
+    async def panel(self, kind: str, text: str, state: str = "working") -> None:
+        """Best-effort call into window.__demoPanel[kind](text, state) on the current
+        page — same call shape whether the current document is the splash (its own
+        small window.__demoPanel) or a real page (panel.js's sidebar/pill). Never
+        raises and no-ops if the page or panel isn't available: a cosmetic status
+        update must never interrupt the demo."""
+        if self._page is None:
+            return
+        try:
+            await self._ensure_panel()
+            await self._page.evaluate(
+                "([kind, text, state]) => window.__demoPanel && window.__demoPanel[kind] "
+                "&& window.__demoPanel[kind](text, state)",
+                [kind, text, state],
+            )
+        except PlaywrightError:
+            pass
+
+    async def front_demo(self) -> None:
+        """Bring the demo tab back to the foreground. The pipecat voice client
+        connects in its own tab (open_client_tab), which briefly steals focus —
+        the user should be looking at the demo app, not the audio-plumbing tab."""
+        if self._page is None:
+            return
+        try:
+            await self._page.bring_to_front()
+        except PlaywrightError:
+            pass
 
     async def _settle(self) -> None:
         try:
@@ -183,9 +360,11 @@ class BrowserController:
     async def _snapshot_once(self) -> dict:
         page = self._require_page()
         await self._ensure_cursor()
+        await self._ensure_panel()
         self._seen_refs |= self._refs.keys()
         self._generation += 1
         self._refs = {}
+        self._ref_names = {}
 
         elements: list[dict] = []
         seen_keys: set[tuple[str, str]] = set()
@@ -206,6 +385,7 @@ class BrowserController:
             ref = f"e{len(elements) + 1}"
             elements.append({"ref": ref, "role": data["role"], "name": data["name"]})
             self._refs[ref] = handle
+            self._ref_names[ref] = data["name"] or ref
         self._seen_refs |= self._refs.keys()
 
         h1 = ""
@@ -242,6 +422,7 @@ class BrowserController:
     # -- navigation / actions ------------------------------------------------
 
     async def navigate(self, url: str) -> dict:
+        await self.panel("act", f"Opening {url}")
         page = self._require_page()
         try:
             await page.goto(url, timeout=_TIMEOUT_MS, wait_until="domcontentloaded")
@@ -255,6 +436,7 @@ class BrowserController:
 
     async def click(self, ref: str) -> dict:
         handle = self._resolve(ref)
+        await self.panel("act", f'Clicking "{self._ref_names.get(ref, ref)}"')
         await self._glide(handle)
         try:
             await handle.click(timeout=_TIMEOUT_MS)
@@ -265,6 +447,7 @@ class BrowserController:
 
     async def type(self, ref: str, text: str) -> dict:
         handle = self._resolve(ref)
+        await self.panel("act", f'Typing into "{self._ref_names.get(ref, ref)}"')
         await self._glide(handle)
         try:
             await handle.fill(text, timeout=_TIMEOUT_MS)
@@ -277,6 +460,7 @@ class BrowserController:
         """Choose an option in a <select> by visible label, falling back to value
         (Playwright's fill() rejects <select>; this is the dedicated path)."""
         handle = self._resolve(ref)
+        await self.panel("act", f'Choosing "{option}"')
         await self._glide(handle)
         try:
             await handle.select_option(label=option, timeout=_TIMEOUT_MS)
@@ -291,6 +475,7 @@ class BrowserController:
     async def scroll(self, direction: Literal["up", "down"]) -> dict:
         if direction not in ("up", "down"):
             raise ControllerError(f"invalid scroll direction {direction!r} (use 'up' or 'down')")
+        await self.panel("act", f"Scrolling {direction}")
         page = self._require_page()
         viewport = page.viewport_size or {"height": 800}
         delta = int(viewport["height"] * 0.7)

@@ -117,11 +117,27 @@ async def _open_browser_when_up(url: str) -> None:
 async def _connect_client_when_up(controller, url: str) -> None:
     """Once the server serves, open the voice client in the controlled browser
     with mic permission granted and Connect clicked — zero manual steps.
-    (AUTO_OPEN=0 disables; failures degrade to a printed open-it-yourself hint.)"""
+    (AUTO_OPEN=0 disables; failures degrade to a printed open-it-yourself hint.)
+
+    Drives the guided-UX status panel through the connect handoff: on success
+    the demo tab (not the pipecat client tab) gets focus back and the panel
+    goes "live"; on failure it flags the error with a pointer at the client URL.
+    """
     if os.getenv("AUTO_OPEN", "1") == "0":
         return
     if await _when_up(url):
-        await controller.open_client_tab(url)
+        await controller.panel("phase", "Connecting audio", "working")
+        if await controller.open_client_tab(url):
+            await controller.front_demo()
+            await controller.panel("phase", "Live — say hello", "live")
+            await controller.panel(
+                "hint",
+                "The agent hears you continuously; just talk. Ctrl-C in the "
+                "terminal ends the demo and writes the report.",
+            )
+        else:
+            await controller.panel("phase", "Audio not connected", "error")
+            await controller.panel("hint", f"Open {url} and click Connect.")
 
 
 async def _ensure_logged_in(controller, settings) -> None:
@@ -140,6 +156,9 @@ async def _ensure_logged_in(controller, settings) -> None:
         except ControllerError as e:
             print(f"demo-agent: credential login failed ({e}) — falling back to manual login.",
                   flush=True)
+    # Unconditional: the only way to know the manual-login path has been
+    # reached is to be about to call wait_for_login() itself.
+    await controller.panel("hint", "Log in in this window — I'll notice.")
     if not await controller.wait_for_login():
         print("demo-agent: no login detected — proceeding with whatever is accessible.",
               flush=True)
@@ -221,9 +240,17 @@ async def main() -> None:
     controller = BrowserController(headless=False, storage_state=settings.storage_state or None)
     try:
         await controller.start()
+        # Startup takes tens of seconds with nothing else on screen — show a
+        # phase checklist immediately so the user knows what's happening and
+        # when (if ever) they need to act. Phases before the target navigation
+        # land on this splash card; navigate() below replaces it with the real
+        # app, where panel.js's sidebar takes over the same phase/hint API.
+        await controller.show_splash()
 
         if settings.target_url:
+            await controller.panel("phase", "Opening the app", "working")
             await controller.navigate(settings.target_url)
+            await controller.panel("phase", "Signing in", "working")
             await _ensure_logged_in(controller, settings)
             # SPAs keep rendering long after navigation "completes" — don't
             # read context (or start the demo) off a half-painted skeleton.
@@ -231,6 +258,7 @@ async def main() -> None:
                 print("demo-agent: page content still thin after 10s — continuing anyway.",
                       flush=True)
 
+        await controller.panel("phase", "Reading the product", "working")
         brief = await _build_product_brief(controller, settings)
         print(
             f"demo-agent: product brief ready ({len(brief)} chars): {brief[:120]}..."
@@ -251,6 +279,7 @@ async def main() -> None:
         client_opener = asyncio.create_task(
             _connect_client_when_up(controller, f"{_BASE_URL}/client/")
         )
+        await controller.panel("phase", "Starting voice server", "working")
         try:
             await run_voice_agent(register_tools=_register, system_prompt=system_prompt)
         finally:

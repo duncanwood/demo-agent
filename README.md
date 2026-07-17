@@ -25,10 +25,14 @@ target app's login, or click "use local mode" to run with no keys at all. Keys a
 written to your local `.env` — you can also just edit `.env` by hand and skip the
 page entirely.
 
-Then everything opens itself: the headed Chromium on the target app, and the
-**voice client tab** once the server is up. Click Connect, allow the microphone,
-and the agent greets you, asks what you care about, and gives a tailored tour
-while you watch it drive. Interrupt it any time — it stops and listens.
+Then everything opens itself and tells you where it is: the Chromium window
+starts on a **splash checklist** (opening the app → signing in → reading the
+product → voice server → connecting audio), the voice client connects in a
+background tab with the mic pre-granted, and you land on the demo page with the
+agent greeting you. A **status sidebar** on the page shows what the agent is
+doing ("Clicking 'Dashboard'…"), when it's live, and what to do — you never
+need the pipecat tab (its "Audio settings ↗" link is there when you do).
+Interrupt the agent any time — it stops and listens.
 
 **Logging into the target app** happens on a ladder, whichever rung works first:
 a saved session from a previous run (`.auth-state.json`) → credentials from
@@ -121,7 +125,7 @@ Four self-contained smoke suites run against a bundled fixture page — no API k
 and no network needed:
 
 ```bash
-for t in browser tools distiller report login_wait setup; do .venv/bin/python tests/${t}_smoke.py; done
+for t in browser tools distiller report login_wait setup panel; do .venv/bin/python tests/${t}_smoke.py; done
 ```
 
 ## Layout
