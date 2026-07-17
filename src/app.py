@@ -313,8 +313,21 @@ async def main() -> None:
         await controller.show_splash()
 
         if settings.target_url:
+            from src.browser.controller import ControllerError
+
             await controller.panel("phase", "Opening the app", "working")
-            await controller.navigate(settings.target_url)
+            try:
+                await controller.navigate(settings.target_url)
+            except ControllerError as e:
+                # A bad target must end as one friendly line, not a traceback.
+                print(
+                    f"demo-agent: could not open {settings.target_url} ({e}) — "
+                    "check the URL via make settings.",
+                    flush=True,
+                )
+                await controller.panel("phase", "Could not open the app", "error")
+                await controller.panel("hint", "Fix the target URL (make settings), then rerun.")
+                raise SystemExit(1)
             await controller.panel("phase", "Signing in", "working")
             await _ensure_logged_in(controller, settings)
             # SPAs keep rendering long after navigation "completes" — don't

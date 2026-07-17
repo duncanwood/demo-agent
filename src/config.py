@@ -27,6 +27,15 @@ load_dotenv()
 DEFAULT_STORAGE_STATE = ".auth-state.json"
 
 
+def _normalize_url(url: str) -> str:
+    """People type bare domains ("duncanwood.net"); Chromium calls that an
+    invalid URL. Default to https:// when no scheme is given."""
+    url = url.strip()
+    if url and "://" not in url:
+        return f"https://{url}"
+    return url
+
+
 @dataclass
 class Settings:
     target_url: str = ""
@@ -38,8 +47,8 @@ class Settings:
     cartesia_voice_id: str = ""
 
     def refresh_from_env(self) -> None:
-        self.target_url = os.getenv("DEMO_TARGET_URL", "").strip()
-        self.context_url = os.getenv("CONTEXT_URL", "").strip()
+        self.target_url = _normalize_url(os.getenv("DEMO_TARGET_URL", ""))
+        self.context_url = _normalize_url(os.getenv("CONTEXT_URL", ""))
         self.login_email = os.getenv("DEMO_LOGIN_EMAIL", "").strip()
         self.login_password = os.getenv("DEMO_LOGIN_PASSWORD", "")
         self.storage_state = os.getenv("STORAGE_STATE", "").strip() or DEFAULT_STORAGE_STATE
