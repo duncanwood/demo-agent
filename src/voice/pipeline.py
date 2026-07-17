@@ -90,8 +90,15 @@ import asyncio
 from typing import Any, Callable
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import (
+    BotSpeakingFrame,
+    BotStartedSpeakingFrame,
+    InterimTranscriptionFrame,
+    LLMRunFrame,
+    TranscriptionFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.processors.idle_frame_processor import IdleFrameProcessor
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
@@ -155,10 +162,42 @@ async def bot(runner_args: SmallWebRTCRunnerArguments) -> None:
         user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
     )
 
+    # Anti-stall nudge: the LLM sometimes ends a turn on an announcement
+    # ("let's look at the Teams tab") and then waits for an acknowledgment
+    # that a silently-watching visitor never gives. If neither user speech
+    # (transcriptions) nor bot speech (BotSpeaking* ticks, which propagate
+    # upstream to this position) happens for the timeout, append a steering
+    # note and run one LLM turn so the tour keeps moving on its own.
+    async def _on_idle(_processor) -> None:
+        context.add_message(
+            {
+                "role": "system",
+                "content": (
+                    "(The visitor is quietly watching. Continue the demo on your "
+                    "own: if you announced an action, perform it now with a tool "
+                    "call; otherwise show the next part of the tour, or wrap up "
+                    "if you have covered the key features.)"
+                ),
+            }
+        )
+        await worker.queue_frames([LLMRunFrame()])
+
+    idle = IdleFrameProcessor(
+        callback=_on_idle,
+        timeout=12.0,
+        types=[
+            TranscriptionFrame,
+            InterimTranscriptionFrame,
+            BotStartedSpeakingFrame,
+            BotSpeakingFrame,
+        ],
+    )
+
     pipeline = Pipeline(
         [
             transport.input(),
             stt,
+            idle,
             user_aggregator,
             llm,
             tts,
