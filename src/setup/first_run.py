@@ -4,17 +4,16 @@ When the app starts in cloud mode without its provider keys, `app.py` (an
 integrator's concern, not this module's) is expected to call
 `run_first_run_setup()` instead of exiting. This module then serves a tiny
 local web page — GET / renders a form for DEEPGRAM_API_KEY / OPENAI_API_KEY /
-CARTESIA_API_KEY (plus an optional demo-login email/password) with a "use
-local mode instead" escape hatch. POST /save validates the three keys live
+CARTESIA_API_KEY (plus an optional demo-login email/password). POST /save
+validates the three keys live
 against each provider (2xx = valid; validation is dependency-injected for
 tests), and on success merges the submitted values into the .env file at
 `env_path` — creating it from .env.example if absent, replacing existing
 `VAR=` lines in place, appending any that don't yet exist, and preserving
 every other line (comments, blank lines, unrelated vars) byte-for-byte via an
-atomic write (temp file + os.replace). POST /local-mode does the same but
-just sets PROVIDER_MODE=local.
+atomic write (temp file + os.replace).
 
-Either success path calls `src.config.reload_settings()` (only when
+The success path calls `src.config.reload_settings()` (only when
 `env_path` is the real ".env" — never for a test's temp path), renders a
 success page, and stops the setup server (`uvicorn.Server.should_exit`) so
 `run_first_run_setup()` returns True and the caller can proceed to boot the
@@ -27,7 +26,7 @@ composes uvicorn inside an already-running event loop the same way. Unlike
 that module, no custom signal handling is installed here — a Ctrl-C during
 setup is expected to fall through to uvicorn's own default handling, which is
 enough for a one-time local setup flow; the "did it finish?" contract is just
-whether the serve task ends with the save/local-mode outcome flag set.
+whether the serve task ends with the save outcome flag set.
 
 No key value is ever printed, logged, or echoed anywhere (uvicorn is started
 with access_log=False; validation failures surface only the exception class
@@ -293,27 +292,20 @@ def _render_setup_page(values: dict[str, str], errors: dict[str, str]) -> str:
 {login_fields}      </div>
       <div class="actions">
         <button type="submit" class="primary">Save keys and continue</button>
-        <button type="submit" formaction="/local-mode" formnovalidate class="secondary">Use local mode instead (no keys)</button>
       </div>
     </form>
 """
     return _shell(body)
 
 
-def _render_success_page(*, poll: bool) -> str:
-    if poll:
-        # No redirect to /client/: the app auto-connects the voice client in
-        # its own controlled browser — a redirect here would spawn a SECOND
-        # client session. This window's job is done.
-        body = """    <div class="badge">&#10003;</div>
+def _render_success_page() -> str:
+    # No redirect to /client/: the app auto-connects the voice client in its
+    # own controlled browser — a redirect here would spawn a SECOND client
+    # session. This window's job is done.
+    body = """    <div class="badge">&#10003;</div>
     <h1>Setup complete</h1>
     <p class="sub">Keys saved. The demo is starting — its own window opens in a
     moment. You can close this one.</p>
-"""
-    else:
-        body = """    <div class="badge">&#10003;</div>
-    <h1>Local mode set</h1>
-    <p class="sub">Local mode set. The app is starting; see the terminal.</p>
 """
     return _shell(body)
 
@@ -371,18 +363,7 @@ async def run_first_run_setup(
         if env_path == ".env":
             reload_settings()
 
-        page = _render_success_page(poll=True)
-        outcome["done"] = True
-        server.should_exit = True
-        return HTMLResponse(page)
-
-    @app.post("/local-mode", response_class=HTMLResponse)
-    async def local_mode() -> HTMLResponse:
-        _merge_env_file(env_path, {"PROVIDER_MODE": "local"})
-        if env_path == ".env":
-            reload_settings()
-
-        page = _render_success_page(poll=False)
+        page = _render_success_page()
         outcome["done"] = True
         server.should_exit = True
         return HTMLResponse(page)

@@ -5,7 +5,7 @@ PYTHON_VERSION := 3.12
 UV := $(shell command -v uv 2>/dev/null || echo $(HOME)/.local/bin/uv)
 PY = .venv/bin/python
 
-.PHONY: setup local-setup run report reset-auth clean
+.PHONY: setup run report reset-auth clean
 
 setup:  ## provision pinned Python + venv + deps + Chromium, scaffold .env
 	@command -v uv >/dev/null 2>&1 || test -x $(UV) || { \
@@ -16,10 +16,6 @@ setup:  ## provision pinned Python + venv + deps + Chromium, scaffold .env
 	$(PY) -m playwright install chromium
 	@test -f .env || cp .env.example .env
 	@echo "Setup complete. Run: make run  (keys are collected on first run, or edit .env)"
-
-local-setup:  ## install local-model extras (Whisper + Kokoro); run Ollama separately
-	$(UV) pip install --python $(PY) -r requirements-local.txt
-	@echo "Local extras installed. Set PROVIDER_MODE=local in .env and start Ollama."
 
 run:  ## launch the demo agent
 	$(PY) -m src.app

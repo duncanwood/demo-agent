@@ -1,8 +1,9 @@
-"""Central config + provider factory (BUILD_PLAN B8).
+"""Central config + provider factory.
 
-Reads .env and constructs the STT / LLM / TTS services for the pipecat pipeline,
-switching on PROVIDER_MODE (cloud | local). Imports are done lazily inside the
-factories so `cloud` mode never requires the local extras and vice-versa.
+Reads .env and constructs the STT / LLM / TTS services for the pipecat
+pipeline. Providers sit behind one small factory seam (make_stt/make_llm/
+make_tts) so they stay swappable; this build ships the cloud set —
+Deepgram / OpenAI / Cartesia.
 
 `settings` is a single mutable instance shared by every importer. The first-run
 setup GUI can write new values into .env while the process is running, then call
@@ -28,27 +29,21 @@ DEFAULT_STORAGE_STATE = ".auth-state.json"
 
 @dataclass
 class Settings:
-    provider_mode: str = "cloud"
     target_url: str = ""
     context_url: str = ""
     login_email: str = ""
     login_password: str = ""
     storage_state: str = DEFAULT_STORAGE_STATE
     openai_model: str = "gpt-4o"
-    ollama_model: str = "llama3.1"
-    ollama_base_url: str = "http://localhost:11434/v1"
     cartesia_voice_id: str = ""
 
     def refresh_from_env(self) -> None:
-        self.provider_mode = os.getenv("PROVIDER_MODE", "cloud").strip()
         self.target_url = os.getenv("DEMO_TARGET_URL", "").strip()
         self.context_url = os.getenv("CONTEXT_URL", "").strip()
         self.login_email = os.getenv("DEMO_LOGIN_EMAIL", "").strip()
         self.login_password = os.getenv("DEMO_LOGIN_PASSWORD", "")
         self.storage_state = os.getenv("STORAGE_STATE", "").strip() or DEFAULT_STORAGE_STATE
         self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o").strip()
-        self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3.1").strip()
-        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1").strip()
         self.cartesia_voice_id = os.getenv("CARTESIA_VOICE_ID", "").strip()
 
 
@@ -63,15 +58,13 @@ def reload_settings() -> None:
 
 
 def missing_cloud_keys() -> list[str]:
-    """Names of required-but-unset env keys for the active provider mode."""
-    if settings.provider_mode != "cloud":
-        return []
+    """Names of required-but-unset provider keys."""
     required = ("DEEPGRAM_API_KEY", "OPENAI_API_KEY", "CARTESIA_API_KEY")
     return [k for k in required if not os.getenv(k)]
 
 
 def validate_for_mode() -> None:
-    """Fail fast with one friendly line if required keys are missing for the active mode.
+    """Fail fast with one friendly line if required keys are missing.
 
     Call this before constructing any pipecat service so a misconfigured .env
     produces a clean message instead of a KeyError traceback.
@@ -86,40 +79,23 @@ def validate_for_mode() -> None:
         print(
             "demo-agent: missing required environment variable(s): "
             + ", ".join(f"{k} ({labels[k]})" for k in missing)
-            + " -- set them in .env (see .env.example), or set PROVIDER_MODE=local to run without cloud keys."
+            + " -- set them in .env (see .env.example), or rerun make run to use the setup page."
         )
         sys.exit(1)
 
 
 def make_stt():
-    if settings.provider_mode == "local":
-        import platform
-
-        # needs [whisper] extra; on Apple Silicon also [mlx-whisper] (see
-        # requirements-local.txt) — and there the Metal-accelerated MLX backend
-        # is the better realtime choice. Models auto-download on first use.
-        if platform.system() == "Darwin" and platform.machine() == "arm64":
-            from pipecat.services.whisper.stt import WhisperSTTServiceMLX
-            return WhisperSTTServiceMLX()
-        from pipecat.services.whisper.stt import WhisperSTTService
-        return WhisperSTTService()
     from pipecat.services.deepgram.stt import DeepgramSTTService
     return DeepgramSTTService(api_key=os.environ["DEEPGRAM_API_KEY"])
 
 
 def make_llm():
     """Return an LLM service that supports function calling (register_function)."""
-    if settings.provider_mode == "local":
-        from pipecat.services.ollama.llm import OLLamaLLMService
-        return OLLamaLLMService(model=settings.ollama_model, base_url=settings.ollama_base_url)
     from pipecat.services.openai.llm import OpenAILLMService
     return OpenAILLMService(api_key=os.environ["OPENAI_API_KEY"], model=settings.openai_model)
 
 
 def make_tts():
-    if settings.provider_mode == "local":
-        from pipecat.services.kokoro.tts import KokoroTTSService  # needs [kokoro] extra
-        return KokoroTTSService()
     from pipecat.services.cartesia.tts import CartesiaTTSService
     return CartesiaTTSService(
         api_key=os.environ["CARTESIA_API_KEY"],

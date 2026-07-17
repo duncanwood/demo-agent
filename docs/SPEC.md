@@ -85,7 +85,10 @@ surface:
 
 ## 6. Decisions (locked 2026-07-16)
 
-**D1 — Model providers: cloud-default, provider-agnostic, local toggle.** All three stages
+**D1 — Model providers: cloud-default, provider-agnostic, local toggle.**
+*(Amended 2026-07-16: the local toggle was descoped before submission — it never
+got a live end-to-end test, and an untested mode is a liability. Cloud-only
+ships; the provider-factory seam remains.)* All three stages
 (STT/LLM/TTS) are swappable via `.env`. The quickstart default targets **cloud** free-tier
 providers for smooth latency — default picks: **Deepgram** STT, **OpenAI** LLM (strong
 function-calling), **Cartesia** TTS. A documented one-flag **local** mode (Whisper STT +

@@ -16,8 +16,7 @@ Prerequisites: `make` and `curl` — nothing else. Setup provisions its own
 pinned Python 3.12 via [uv](https://docs.astral.sh/uv/) (installing uv first if
 missing), so the install is identical on every machine regardless of system
 Python. Disk: ~1.1 GB total (~750 MB venv — mostly pipecat's media stack — plus
-one ~330 MB Chromium build); the heavier local-model extras are opt-in via
-`make local-setup` and never part of the default install.
+one ~330 MB Chromium build).
 
 ```bash
 make setup          # venv + deps + Chromium + scaffolds .env
@@ -26,9 +25,8 @@ make run            # everything else is guided
 
 On a first run with no keys, a **setup page opens in your browser**: paste your
 three provider keys (all have free tiers; each is validated live), optionally the
-target app's login, or click "use local mode" to run with no keys at all. Keys are
-written to your local `.env` — you can also just edit `.env` by hand and skip the
-page entirely.
+target app's login. Keys are written to your local `.env` — you can also just
+edit `.env` by hand and skip the page entirely.
 
 Then everything opens itself and tells you where it is: the Chromium window
 starts on a **splash checklist** (opening the app → signing in → reading the
@@ -68,24 +66,8 @@ transcript. `make report` reopens the newest one; every run also logs to
 | `DEMO_LOGIN_EMAIL` / `DEMO_LOGIN_PASSWORD` | no | App login — omit to log in manually instead (auto-detected) |
 | `CONTEXT_URL` | no | Landing page to distill product context from (default: the logged-in app page itself) |
 | `STORAGE_STATE` | no | Saved auth state path (default `.auth-state.json`, gitignored) |
-| `PROVIDER_MODE` | no | `cloud` (default) or `local` (zero keys, see below) |
 | `AUTO_OPEN` | no | `0` disables the self-opening browser tabs |
-| `OPENAI_MODEL`, `CARTESIA_VOICE_ID`, `OLLAMA_*` | no | Provider tuning (voice defaults to a sensible pick) |
-
-## Local mode (no API keys)
-
-All three stages can run locally: Whisper STT (in-process), an
-[Ollama](https://ollama.com) model, and Kokoro TTS (in-process).
-
-```bash
-make local-setup                  # installs Whisper + Kokoro extras
-ollama pull llama3.1              # any tool-calling model works; set OLLAMA_MODEL
-# set PROVIDER_MODE=local in .env, then:
-make run
-```
-
-First run downloads the Whisper model; expect a delay. Cloud mode is the smoother
-demo (latency, voice quality); local mode is the no-keys fallback.
+| `OPENAI_MODEL`, `CARTESIA_VOICE_ID` | no | Provider tuning (voice defaults to a sensible pick) |
 
 ## How it works
 
@@ -118,8 +100,8 @@ Design choices worth knowing:
 - **The demo can't be steered off the product.** The `navigate` tool refuses
   URLs outside the target app's origin; tool errors return to the model as
   `{"error": ...}` strings — nothing a tool does can crash the session.
-- **Providers are swappable.** STT/LLM/TTS are built by a small factory switched
-  on `PROVIDER_MODE`; the one-shot calls (distiller, report) ride the same switch.
+- **Providers sit behind one seam.** STT/LLM/TTS are built by a small factory
+  (`src/config.py`), so swapping any stage is a one-function change.
 - **Context comes from behind the login.** For gated apps an unauthenticated
   fetch sees only the sign-in screen, so by default the brief is distilled from
   the page the agent is actually logged into; `CONTEXT_URL` overrides with a

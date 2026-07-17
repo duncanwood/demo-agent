@@ -1,9 +1,9 @@
 """Entry point — wires the whole demo agent together.
 
 Startup sequence:
-  1. First-run gate: if cloud keys are missing, serve the local setup page
+  1. First-run gate: if provider keys are missing, serve the local setup page
      (browser opens to it automatically), which writes .env and hot-reloads
-     settings; "use local mode" is the zero-key escape hatch.
+     settings.
   2. Launch headed Chromium, open DEMO_TARGET_URL. Login ladder: saved auth
      state (.auth-state.json) -> .env credentials -> manual login in the
      window (detected automatically, then saved for next time) -> proceed
@@ -337,7 +337,7 @@ async def main() -> None:
             session_contexts.append(ctx)
             register_browser_tools(llm, ctx, controller)
 
-        print(f"demo-agent: starting voice loop (provider_mode={settings.provider_mode})", flush=True)
+        print("demo-agent: starting voice loop", flush=True)
         # The voice client opens as a second tab of the controlled browser with
         # mic permission pre-granted and Connect auto-clicked. (After first-run
         # setup, the setup page also redirects its own tab there — harmless.)

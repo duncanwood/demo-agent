@@ -51,10 +51,6 @@ async def scenario_fresh_env_full_save() -> None:
             assert resp.status_code == 200, resp.status_code
             for name in CLOUD_KEY_FIELDS:
                 assert f'name="{name}"' in resp.text, name
-            # The key fields are `required`, and the local-mode button submits
-            # the SAME form — without formnovalidate the browser blocks it
-            # (HTML-level constraint, invisible to these HTTP-level tests).
-            assert "formnovalidate" in resp.text, "local-mode button must bypass validation"
             print("OK: GET / -> 200, all three field names present in form HTML")
 
             resp = await client.post(
@@ -152,30 +148,10 @@ async def scenario_validation_error_then_ok() -> None:
         print("OK: second POST (validator now ok) completes run_first_run_setup() -> True")
 
 
-async def scenario_local_mode() -> None:
-    """Step 6: POST /local-mode sets PROVIDER_MODE=local and completes True."""
-    with tempfile.TemporaryDirectory() as tmp:
-        env_path = str(Path(tmp) / ".env")
-        base = "http://localhost:7874"
-        task = asyncio.create_task(
-            run_first_run_setup(host="localhost", port=7874, env_path=env_path, validate=lambda keys: {})
-        )
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            await _wait_ready(base, client)
-            resp = await client.post(base + "/local-mode")
-            assert resp.status_code == 200, resp.text
-        assert (await task) is True
-
-        content = Path(env_path).read_text()
-        assert "PROVIDER_MODE=local" in content
-        print("OK: POST /local-mode -> PROVIDER_MODE=local, completes run_first_run_setup() -> True")
-
-
 async def main() -> None:
     await scenario_fresh_env_full_save()
     await scenario_preexisting_env_merge()
     await scenario_validation_error_then_ok()
-    await scenario_local_mode()
     print("\nSETUP SMOKE OK")
 
 
