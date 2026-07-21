@@ -24,7 +24,7 @@ make run            # everything else is guided
 ```
 
 On a first run with no keys, a **setup page opens in your browser**: paste your
-three provider keys (all have free tiers; each is validated live), optionally the
+three provider keys (all have free tiers; each is validated), optionally the
 target app's login. Keys are written to your local `.env` — you can also just
 edit `.env` by hand and skip the page entirely.
 
@@ -33,7 +33,7 @@ starts on a **splash checklist** (opening the app → signing in → reading the
 product → voice server → connecting audio), the voice client connects in a
 background tab with the mic pre-granted, and you land on the demo page with the
 agent greeting you — the voice client lives in a **background tab you never
-see**. The **status sidebar** on the demo page is the whole cockpit: live
+see**. The **status sidebar** on the demo page is the whole cockpit: current
 phase, what the agent is doing ("Clicking 'Dashboard'…"), a **running
 transcript**, **mic picker**, **bot volume**, **Mute mic**, and **End demo**;
 the **Audio panel** button fronts the live client tab (same session) for
@@ -111,13 +111,13 @@ Design choices worth knowing:
   the page the agent is actually logged into; `CONTEXT_URL` overrides with a
   public page when you want marketing-site framing.
 - **Setup is part of the product.** Missing keys produce a local setup page
-  (validated live, written to `.env`, never leaving the machine), not a stack
+  (never leaving the machine), not a stack
   trace; a missing login becomes "log in yourself, I'll notice" rather than a
   crash. Ctrl-C is a graceful path: the browser closes and the report writes.
 
 ## Tests
 
-Four self-contained smoke suites run against a bundled fixture page — no API keys
+Seven self-contained smoke suites run against a bundled fixture page — no API keys
 and no network needed:
 
 ```bash
